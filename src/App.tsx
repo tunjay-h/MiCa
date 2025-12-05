@@ -287,54 +287,87 @@ const NodeInstances = ({
   selectedNodeId,
   onSelect,
   onFocus,
-  hush
+  hush,
+  linkingFromId
 }: {
   nodes: NodeRecord[];
   selectedNodeId?: string;
   onSelect: (id: string) => void;
   onFocus: (id: string) => void;
   hush: number;
-}) => (
-  <group>
-    {nodes.map((node, index) => {
-      const wobble = Math.sin((Date.now() * 0.001 + index) * 0.6) * 0.08 * (0.4 + hush * 0.6);
-      const selected = selectedNodeId === node.id;
-      return (
-        <Float
-          key={node.id}
-          speed={1.2}
-          floatIntensity={0.1}
-          position={[node.position.x, node.position.y + wobble, node.position.z]}
-          scale={selected ? 1.1 : 1}
-        >
-          <mesh
-            onClick={(event) => {
-              event.stopPropagation();
-              onSelect(node.id);
-            }}
-            onDoubleClick={(event) => {
-              event.stopPropagation();
-              onFocus(node.id);
-            }}
-            onPointerDown={(event) => {
-              if (event.detail === 2) {
+  linkingFromId?: string;
+}) => {
+  const [spawnedAt, setSpawnedAt] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    const now = performance.now();
+    setSpawnedAt((prev) => {
+      const next = { ...prev } as Record<string, number>;
+      nodes.forEach((node) => {
+        if (!next[node.id]) {
+          next[node.id] = now;
+        }
+      });
+      Object.keys(next).forEach((id) => {
+        if (!nodes.some((node) => node.id === id)) {
+          delete next[id];
+        }
+      });
+      return next;
+    });
+  }, [nodes]);
+
+  return (
+    <group>
+      {nodes.map((node, index) => {
+        const wobble = Math.sin((Date.now() * 0.001 + index) * 0.6) * 0.08 * (0.4 + hush * 0.6);
+        const selected = selectedNodeId === node.id;
+        const born = spawnedAt[node.id];
+        const age = born ? Math.min((performance.now() - born) / 800, 1) : 1;
+        const growth = born ? 0.7 + 0.35 * Math.sin((age * Math.PI) / 2) : 1;
+        const linkSource = linkingFromId === node.id;
+        const linkable = linkingFromId && linkingFromId !== node.id;
+        const baseScale = (selected ? 1.1 : 1) * growth;
+
+        return (
+          <Float
+            key={node.id}
+            speed={1.2}
+            floatIntensity={0.1}
+            position={[node.position.x, node.position.y + wobble, node.position.z]}
+            scale={baseScale}
+          >
+            <mesh
+              onClick={(event) => {
+                event.stopPropagation();
+                onSelect(node.id);
+              }}
+              onDoubleClick={(event) => {
                 event.stopPropagation();
                 onFocus(node.id);
-              }
-            }}
-          >
-            <sphereGeometry args={[0.25, 28, 28]} />
-            <meshStandardMaterial
-              color={selected ? '#c2ddff' : '#9fb4ff'}
-              emissive="#4ad3e8"
-              emissiveIntensity={0.5 + hush * 0.4 + (selected ? 0.3 : 0)}
-            />
-          </mesh>
-        </Float>
-      );
-    })}
-  </group>
-);
+              }}
+              onPointerDown={(event) => {
+                if (event.detail === 2) {
+                  event.stopPropagation();
+                  onFocus(node.id);
+                }
+              }}
+            >
+              <sphereGeometry args={[0.25, 28, 28]} />
+              <meshStandardMaterial
+                color={linkSource ? '#f5c97a' : selected ? '#c2ddff' : '#9fb4ff'}
+                emissive={linkable ? '#7af6ff' : '#4ad3e8'}
+                emissiveIntensity={0.45 + hush * 0.35 + (selected ? 0.2 : 0) + (linkable ? 0.2 : 0)}
+                transparent
+                opacity={0.7 + 0.3 * age}
+              />
+            </mesh>
+          </Float>
+        );
+      })}
+    </group>
+  );
+};
 
 const SelectionHalo = ({ node, hush }: { node?: NodeRecord; hush: number }) => {
   const ref = useRef<THREE.Group>(null);
@@ -402,7 +435,7 @@ const Edges = ({
 };
 
 const Toolbelt = ({ hush }: { hush: number }) => {
-  const { view, updateView, resetView, setAppMode } = useMiCa();
+  const { view, updateView, resetView, setAppMode, nodes } = useMiCa();
   const group = useRef<THREE.Group>(null);
   const { camera } = useThree();
 
@@ -439,17 +472,26 @@ const Toolbelt = ({ hush }: { hush: number }) => {
           >
             White Room
           </button>
-          {(['neighborhood', 'two-hop', 'all'] as const).map((mode) => (
-            <button
-              key={mode}
-              className={`rounded-full px-3 py-1 capitalize ${
-                view.edgeVisibility === mode ? 'bg-white/15 text-sand' : 'bg-white/5 text-slate-300'
-              }`}
-              onClick={() => updateView({ edgeVisibility: mode })}
-            >
-              {mode}
-            </button>
-          ))}
+          {(['neighborhood', 'two-hop', 'all'] as const).map((mode) => {
+            const label = mode === 'all' && nodes.length > 30 ? 'all (heavy)' : mode;
+            return (
+              <button
+                key={mode}
+                className={`rounded-full px-3 py-1 capitalize ${
+                  view.edgeVisibility === mode ? 'bg-white/15 text-sand' : 'bg-white/5 text-slate-300'
+                }`}
+                title={mode === 'all' ? 'May be cluttered on large graphs' : undefined}
+                onClick={() => updateView({ edgeVisibility: mode })}
+              >
+                {label}
+              </button>
+            );
+          })}
+          {view.edgeVisibility === 'all' && nodes.length > 30 ? (
+            <span className="rounded-full bg-amber-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-amber-200">
+              Dense view
+            </span>
+          ) : null}
           <button
             className="rounded-full bg-white/5 px-3 py-1"
             onClick={() => resetView()}
@@ -471,7 +513,12 @@ const Toolbelt = ({ hush }: { hush: number }) => {
   );
 };
 
-const detectEmbedProvider = (url: string) => {
+type EmbedProvider = {
+  provider: 'youtube' | 'vimeo' | 'figma' | 'unknown';
+  embedUrl?: string;
+};
+
+const detectEmbedProvider = (url: string): EmbedProvider => {
   try {
     const parsed = new URL(url);
     if (parsed.hostname.includes('youtube.com') || parsed.hostname === 'youtu.be') {
@@ -538,7 +585,7 @@ const BlockView = ({ block }: { block: ContentBlock }) => {
   }
 
   const embed = detectEmbedProvider(block.url);
-  if (!embed.embedUrl || embed.provider === 'unknown') {
+  if (embed.provider === 'unknown' || !embed.embedUrl) {
     return (
       <div className="space-y-1 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-100">
         <p>Embed not allowed for this source.</p>
@@ -562,17 +609,27 @@ const BlockView = ({ block }: { block: ContentBlock }) => {
   );
 };
 
-const NodeInspector = ({ node, nodes, hush }: { node: NodeRecord | undefined; nodes: NodeRecord[]; hush: number }) => {
-  const { deleteNode, createNode, linkNodes, selectNode, updateView, updateNode, view } = useMiCa();
+const NodeInspector = ({
+  node,
+  hush,
+  linkingFromId,
+  onStartLink,
+  onCancelLink
+}: {
+  node: NodeRecord | undefined;
+  hush: number;
+  linkingFromId?: string;
+  onStartLink: (sourceId: string) => void;
+  onCancelLink: () => void;
+}) => {
+  const { deleteNode, createNode, selectNode, updateView, updateNode, view } = useMiCa();
   const anchor = useRef<THREE.Group>(null);
   const { camera } = useThree();
-  const [linkTargetId, setLinkTargetId] = useState<string | undefined>(undefined);
   const [addType, setAddType] = useState<ContentBlock['type']>('markdown');
   const [localNode, setLocalNode] = useState<NodeRecord | undefined>(node);
 
   useEffect(() => {
     setLocalNode(node);
-    setLinkTargetId(undefined);
   }, [node]);
 
   useFrame(() => {
@@ -843,31 +900,17 @@ const NodeInspector = ({ node, nodes, hush }: { node: NodeRecord | undefined; no
               Add child
             </button>
             <div className="flex items-center gap-2 rounded-full border border-white/10 px-2 py-1">
-              <select
-                className="bg-transparent text-sand"
-                value={linkTargetId ?? ''}
-                onChange={(e) => setLinkTargetId(e.target.value)}
-              >
-                <option value="">Link to…</option>
-                {nodes
-                  .filter((candidate) => candidate.id !== node.id)
-                  .map((candidate) => (
-                    <option key={candidate.id} value={candidate.id}>
-                      {candidate.title}
-                    </option>
-                  ))}
-              </select>
               <button
-                className="rounded-full bg-white/10 px-2 py-1"
-                disabled={!linkTargetId}
-                onClick={() => {
-                  if (linkTargetId) {
-                    void linkNodes(node.id, linkTargetId, 'related');
-                  }
-                }}
+                className={`rounded-full px-3 py-1 ${
+                  linkingFromId === node.id ? 'bg-aurora/20 text-aurora' : 'bg-white/10 text-sand'
+                }`}
+                onClick={() => (linkingFromId === node.id ? onCancelLink() : onStartLink(node.id))}
               >
-                Link
+                {linkingFromId === node.id ? 'Cancel link' : 'Link to…'}
               </button>
+              <span className="text-[10px] text-slate-300">
+                {linkingFromId === node.id ? 'Click another node or press Esc' : 'Double-click nodes to focus'}
+              </span>
             </div>
             <button
               className="rounded-full border border-red-400/40 px-3 py-1 text-red-200"
@@ -930,9 +973,10 @@ const CommandBar = ({ visible, onClose, hush }: { visible: boolean; onClose: () 
 };
 
 const SpaceWorld = () => {
-  const { nodes, edges, view, updateView, selectedNodeId, selectNode, hush } = useMiCa();
+  const { nodes, edges, view, updateView, selectedNodeId, selectNode, hush, linkNodes } = useMiCa();
   const controls = useRef<any>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [linkingFromId, setLinkingFromId] = useState<string | undefined>(undefined);
   const { camera } = useThree();
 
   const nodeLookup = useMemo(() => Object.fromEntries(nodes.map((node) => [node.id, node])), [nodes]);
@@ -1014,11 +1058,26 @@ const SpaceWorld = () => {
       }
       if (event.key === 'Escape') {
         setSearchOpen(false);
+        setLinkingFromId(undefined);
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, []);
+
+  const handleSelect = useCallback(
+    (nodeId: string) => {
+      if (linkingFromId) {
+        if (linkingFromId !== nodeId) {
+          void linkNodes(linkingFromId, nodeId, 'related');
+        }
+        setLinkingFromId(undefined);
+        return;
+      }
+      selectNode(nodeId);
+    },
+    [linkingFromId, linkNodes, selectNode]
+  );
 
   const Env = view.environment === 'dome' ? DomeEnvironment : WhiteRoomEnvironment;
 
@@ -1028,11 +1087,24 @@ const SpaceWorld = () => {
       <OrbitControls ref={controls} enablePan={false} enableDamping dampingFactor={0.08} />
       <ambientLight intensity={0.8} />
       <pointLight position={[10, 12, 8]} intensity={1.2} />
-      <NodeInstances nodes={nodes} selectedNodeId={selectedNodeId} onSelect={selectNode} onFocus={focusNode} hush={hush} />
+      <NodeInstances
+        nodes={nodes}
+        selectedNodeId={selectedNodeId}
+        onSelect={handleSelect}
+        onFocus={focusNode}
+        hush={hush}
+        linkingFromId={linkingFromId}
+      />
       <SelectionHalo node={selectedNode} hush={hush} />
       <Edges nodes={nodes} edges={edges} visibleSet={visibleSet} hush={hush} />
       <Toolbelt hush={hush} />
-      <NodeInspector node={selectedNode} nodes={nodes} hush={hush} />
+      <NodeInspector
+        node={selectedNode}
+        hush={hush}
+        linkingFromId={linkingFromId}
+        onStartLink={(sourceId) => setLinkingFromId(sourceId)}
+        onCancelLink={() => setLinkingFromId(undefined)}
+      />
       <CommandBar visible={searchOpen} onClose={() => setSearchOpen(false)} hush={hush} />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -3, 0]}>
         <circleGeometry args={[18, 64]} />
