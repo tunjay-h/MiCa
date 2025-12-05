@@ -5,11 +5,13 @@ import { nanoid } from '../utils/nanoid';
 import {
   type ContentBlock,
   type AppMode,
+  type AppSettings,
   type EdgeRecord,
   type MarkdownBlock,
   type NodeRecord,
   type SearchResult,
   type SpaceRecord,
+  type SpaceViewStateRecord,
   type ViewState
 } from './types';
 
@@ -23,6 +25,7 @@ interface MiCaState {
   selectedNodeId?: string;
   searchQuery: string;
   view: ViewState;
+  appSettings: AppSettings;
   hush: number;
   hushTarget: number;
   init: () => Promise<void>;
@@ -54,6 +57,12 @@ const defaultViewState: ViewState = {
   mode: 'observe'
 };
 
+const defaultAppSettings: AppSettings = {
+  key: 'app',
+  schemaVersion: currentSchemaVersion,
+  lastOpenedSpaceId: undefined
+};
+
 const isMarkdownBlock = (block: ContentBlock): block is MarkdownBlock =>
   block.type === 'markdown';
 
@@ -67,31 +76,47 @@ export const useMiCa = create<MiCaState>((set, get) => ({
   selectedNodeId: undefined,
   searchQuery: '',
   view: defaultViewState,
+  appSettings: defaultAppSettings,
   hush: 1,
   hushTarget: 1,
   init: async () => {
+    let appSettings = (await db.appSettings.get('app')) ?? defaultAppSettings;
+
     const spaceCount = await db.spaces.count();
     if (spaceCount === 0) {
       const payload = buildTemplates();
-      await db.transaction('rw', [db.spaces, db.nodes, db.edges, db.views], async () => {
+      await db.transaction('rw', [db.spaces, db.nodes, db.edges, db.spaceViewState, db.appSettings], async () => {
         await db.spaces.bulkAdd(payload.spaces);
         await db.nodes.bulkAdd(payload.nodes);
         await db.edges.bulkAdd(payload.edges);
-        await Promise.all(
-          payload.spaces.map((space) =>
-            db.views.put({ ...space.view, spaceId: space.id })
-          )
-        );
+        await db.spaceViewState.bulkPut(payload.viewStates);
+        appSettings = {
+          ...defaultAppSettings,
+          lastOpenedSpaceId: payload.spaces[0]?.id
+        };
+        await db.appSettings.put(appSettings);
       });
     }
+
+    if (appSettings.schemaVersion !== currentSchemaVersion) {
+      appSettings = { ...appSettings, schemaVersion: currentSchemaVersion };
+      await db.appSettings.put(appSettings);
+    }
+
     const spaces = await db.spaces.toArray();
-    const storedLastSpace = typeof localStorage !== 'undefined' ? localStorage.getItem('mica:lastSpaceId') : undefined;
-    const activeSpaceId = storedLastSpace && spaces.some((s) => s.id === storedLastSpace)
-      ? storedLastSpace
+    const activeSpaceId = appSettings.lastOpenedSpaceId && spaces.some((s) => s.id === appSettings.lastOpenedSpaceId)
+      ? appSettings.lastOpenedSpaceId
       : spaces[0]?.id;
     const nodes = activeSpaceId ? await db.nodes.where({ spaceId: activeSpaceId }).toArray() : [];
     const edges = activeSpaceId ? await db.edges.where({ spaceId: activeSpaceId }).toArray() : [];
-    const viewRecord = activeSpaceId ? await db.views.get(activeSpaceId) : undefined;
+    const viewRecord = activeSpaceId ? await db.spaceViewState.get(activeSpaceId) : undefined;
+
+    const nextSettings: AppSettings = {
+      ...appSettings,
+      lastOpenedSpaceId: activeSpaceId
+    };
+    await db.appSettings.put(nextSettings);
+
     set({
       initialized: true,
       spaces,
@@ -99,22 +124,28 @@ export const useMiCa = create<MiCaState>((set, get) => ({
       nodes,
       edges,
       view: viewRecord ?? defaultViewState,
-      appMode: 'HOME_3D'
+      appMode: 'HOME_3D',
+      appSettings: nextSettings,
+      hushTarget: (viewRecord ?? defaultViewState).mode === 'observe' ? 1 : 0
     });
   },
   setActiveSpace: async (spaceId) => {
     const nodes = await db.nodes.where({ spaceId }).toArray();
     const edges = await db.edges.where({ spaceId }).toArray();
-    const view = (await db.views.get(spaceId)) ?? defaultViewState;
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('mica:lastSpaceId', spaceId);
-    }
+    const view = (await db.spaceViewState.get(spaceId)) ?? defaultViewState;
+    const nextSettings: AppSettings = {
+      key: 'app',
+      schemaVersion: currentSchemaVersion,
+      lastOpenedSpaceId: spaceId
+    };
+    await db.appSettings.put(nextSettings);
     set({
       activeSpaceId: spaceId,
       nodes,
       edges,
       selectedNodeId: undefined,
       view,
+      appSettings: nextSettings,
       hushTarget: (view.mode ?? 'observe') === 'observe' ? 1 : 0
     });
   },
@@ -123,11 +154,12 @@ export const useMiCa = create<MiCaState>((set, get) => ({
     const template = instantiateTemplate(templateName) ?? instantiateTemplate('Blank Space');
     if (!template) return undefined;
     const space = { ...template.space, ...overrides } as SpaceRecord;
-    await db.transaction('rw', [db.spaces, db.nodes, db.edges, db.views], async () => {
+    const viewState: SpaceViewStateRecord = { ...(template.viewState ?? template.space.view), spaceId: space.id };
+    await db.transaction('rw', [db.spaces, db.nodes, db.edges, db.spaceViewState], async () => {
       await db.spaces.add(space);
       await db.nodes.bulkAdd(template.nodes.map((node) => ({ ...node, spaceId: space.id })));
       await db.edges.bulkAdd(template.edges.map((edge) => ({ ...edge, spaceId: space.id })));
-      await db.views.put({ ...(space.view ?? template.space.view), spaceId: space.id });
+      await db.spaceViewState.put(viewState);
     });
     const spaces = await db.spaces.toArray();
     set({ spaces });
@@ -140,18 +172,35 @@ export const useMiCa = create<MiCaState>((set, get) => ({
     set({ spaces });
   },
   deleteSpace: async (spaceId) => {
-    await db.transaction('rw', [db.spaces, db.nodes, db.edges, db.views], async () => {
+    await db.transaction('rw', [db.spaces, db.nodes, db.edges, db.spaceViewState, db.appSettings], async () => {
       await db.spaces.delete(spaceId);
       await db.nodes.where({ spaceId }).delete();
       await db.edges.where({ spaceId }).delete();
-      await db.views.delete(spaceId);
+      await db.spaceViewState.delete(spaceId);
     });
     const spaces = await db.spaces.toArray();
     const nextActive = spaces[0]?.id;
     const nodes = nextActive ? await db.nodes.where({ spaceId: nextActive }).toArray() : [];
     const edges = nextActive ? await db.edges.where({ spaceId: nextActive }).toArray() : [];
-    const view = nextActive ? (await db.views.get(nextActive)) ?? defaultViewState : defaultViewState;
-    set({ spaces, activeSpaceId: nextActive, nodes, edges, selectedNodeId: undefined, view });
+    const view = nextActive
+      ? (await db.spaceViewState.get(nextActive)) ?? defaultViewState
+      : defaultViewState;
+    const nextSettings: AppSettings = {
+      key: 'app',
+      schemaVersion: currentSchemaVersion,
+      lastOpenedSpaceId: nextActive
+    };
+    await db.appSettings.put(nextSettings);
+    set({
+      spaces,
+      activeSpaceId: nextActive,
+      nodes,
+      edges,
+      selectedNodeId: undefined,
+      view,
+      appSettings: nextSettings,
+      hushTarget: (view.mode ?? 'observe') === 'observe' ? 1 : 0
+    });
   },
   createNode: async ({ parentId, title }) => {
     const state = get();
@@ -236,7 +285,7 @@ export const useMiCa = create<MiCaState>((set, get) => ({
       camera: view.camera ?? state.view.camera,
       mode: view.mode ?? state.view.mode ?? 'observe'
     };
-    await db.views.put({ ...nextView, spaceId: state.activeSpaceId });
+    await db.spaceViewState.put({ ...nextView, spaceId: state.activeSpaceId });
     set({ view: nextView, hushTarget: nextView.mode === 'observe' ? 1 : 0 });
   },
   selectNode: (nodeId) => set({ selectedNodeId: nodeId }),
@@ -272,11 +321,12 @@ export const useMiCa = create<MiCaState>((set, get) => ({
       });
   },
   exportAll: async () => {
-    const [spaces, nodes, edges, views] = await Promise.all([
+    const [spaces, nodes, edges, viewStates, appSettings] = await Promise.all([
       db.spaces.toArray(),
       db.nodes.toArray(),
       db.edges.toArray(),
-      db.views.toArray()
+      db.spaceViewState.toArray(),
+      db.appSettings.toArray()
     ]);
     return JSON.stringify(
       {
@@ -285,7 +335,8 @@ export const useMiCa = create<MiCaState>((set, get) => ({
         spaces,
         nodes,
         edges,
-        views
+        spaceViewState: viewStates,
+        appSettings
       },
       null,
       2
@@ -296,7 +347,7 @@ export const useMiCa = create<MiCaState>((set, get) => ({
       db.spaces.get(spaceId),
       db.nodes.where({ spaceId }).toArray(),
       db.edges.where({ spaceId }).toArray(),
-      db.views.get(spaceId)
+      db.spaceViewState.get(spaceId)
     ]);
     return JSON.stringify(
       {
@@ -305,7 +356,7 @@ export const useMiCa = create<MiCaState>((set, get) => ({
         spaces: space ? [space] : [],
         nodes,
         edges,
-        views: view ? [view] : []
+        spaceViewState: view ? [view] : []
       },
       null,
       2
@@ -318,6 +369,8 @@ export const useMiCa = create<MiCaState>((set, get) => ({
       nodes?: NodeRecord[];
       edges?: EdgeRecord[];
       views?: (ViewState & { spaceId: string })[];
+      spaceViewState?: SpaceViewStateRecord[];
+      appSettings?: AppSettings[];
     };
     const spaces = data.spaces ?? [];
     if (spaces.length === 0) return undefined;
@@ -326,7 +379,7 @@ export const useMiCa = create<MiCaState>((set, get) => ({
     let addedNodes = 0;
     let addedEdges = 0;
 
-    await db.transaction('rw', [db.spaces, db.nodes, db.edges, db.views], async () => {
+    await db.transaction('rw', [db.spaces, db.nodes, db.edges, db.spaceViewState, db.appSettings], async () => {
       for (const space of spaces) {
         const newSpaceId = nanoid();
         const nodeMap = new Map<string, string>();
@@ -371,13 +424,21 @@ export const useMiCa = create<MiCaState>((set, get) => ({
           addedEdges += 1;
         }
 
-        const view = (data.views ?? []).find((entry) => entry.spaceId === space.id);
-        await db.views.put({ ...(view ?? defaultViewState), spaceId: newSpaceId });
+        const view = (data.spaceViewState ?? data.views ?? []).find((entry) => entry.spaceId === space.id);
+        await db.spaceViewState.put({ ...(view ?? defaultViewState), spaceId: newSpaceId });
       }
+      const incomingSettings = (data.appSettings ?? []).find((entry) => entry.key === 'app');
+      const mergedSettings: AppSettings = {
+        key: 'app',
+        schemaVersion: currentSchemaVersion,
+        lastOpenedSpaceId: incomingSettings?.lastOpenedSpaceId
+      };
+      await db.appSettings.put(mergedSettings);
     });
 
     const refreshedSpaces = await db.spaces.toArray();
-    set({ spaces: refreshedSpaces });
+    const nextSettings = (await db.appSettings.get('app')) ?? defaultAppSettings;
+    set({ spaces: refreshedSpaces, appSettings: nextSettings });
     return { addedSpaces, addedNodes, addedEdges };
   }
 }));

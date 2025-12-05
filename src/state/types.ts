@@ -67,6 +67,10 @@ export interface ViewState {
   mode?: 'observe' | 'edit';
 }
 
+export interface SpaceViewStateRecord extends ViewState {
+  spaceId: string;
+}
+
 export interface SpaceRecord {
   id: string;
   name: string;
@@ -74,6 +78,12 @@ export interface SpaceRecord {
   createdAt: number;
   updatedAt: number;
   view: ViewState;
+}
+
+export interface AppSettings {
+  key: 'app';
+  lastOpenedSpaceId?: string;
+  schemaVersion: number;
 }
 
 export interface SearchResult {
