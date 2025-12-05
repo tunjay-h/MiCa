@@ -4,6 +4,7 @@ import { buildTemplates, instantiateTemplate } from '../data/templates';
 import { nanoid } from '../utils/nanoid';
 import {
   type ContentBlock,
+  type AppMode,
   type EdgeRecord,
   type MarkdownBlock,
   type NodeRecord,
@@ -14,7 +15,7 @@ import {
 
 interface MiCaState {
   initialized: boolean;
-  appState: 'home' | 'space';
+  appMode: AppMode;
   spaces: SpaceRecord[];
   nodes: NodeRecord[];
   edges: EdgeRecord[];
@@ -26,7 +27,7 @@ interface MiCaState {
   hushTarget: number;
   init: () => Promise<void>;
   setActiveSpace: (spaceId: string) => Promise<void>;
-  setAppState: (state: 'home' | 'space') => void;
+  setAppMode: (mode: AppMode) => void;
   addSpaceFromTemplate: (templateName: string, overrides?: Partial<SpaceRecord>) => Promise<string | undefined>;
   renameSpace: (spaceId: string, name: string) => Promise<void>;
   deleteSpace: (spaceId: string) => Promise<void>;
@@ -58,7 +59,7 @@ const isMarkdownBlock = (block: ContentBlock): block is MarkdownBlock =>
 
 export const useMiCa = create<MiCaState>((set, get) => ({
   initialized: false,
-  appState: 'home',
+  appMode: 'HOME_3D',
   spaces: [],
   nodes: [],
   edges: [],
@@ -98,7 +99,7 @@ export const useMiCa = create<MiCaState>((set, get) => ({
       nodes,
       edges,
       view: viewRecord ?? defaultViewState,
-      appState: 'home'
+      appMode: 'HOME_3D'
     });
   },
   setActiveSpace: async (spaceId) => {
@@ -117,7 +118,7 @@ export const useMiCa = create<MiCaState>((set, get) => ({
       hushTarget: (view.mode ?? 'observe') === 'observe' ? 1 : 0
     });
   },
-  setAppState: (state) => set({ appState: state }),
+  setAppMode: (mode) => set({ appMode: mode }),
   addSpaceFromTemplate: async (templateName, overrides) => {
     const template = instantiateTemplate(templateName) ?? instantiateTemplate('Blank Space');
     if (!template) return undefined;

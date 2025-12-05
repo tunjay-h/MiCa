@@ -76,7 +76,7 @@ const SpaceCard = ({
 };
 
 const HomeWorld = () => {
-  const { spaces, addSpaceFromTemplate, setActiveSpace, setAppState, importData, exportAll } = useMiCa();
+  const { spaces, addSpaceFromTemplate, setActiveSpace, setAppMode, importData, exportAll } = useMiCa();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [newSpaceOpen, setNewSpaceOpen] = useState(false);
   const [name, setName] = useState('New Space');
@@ -101,7 +101,7 @@ const HomeWorld = () => {
 
   const handleEnter = async (id: string) => {
     await setActiveSpace(id);
-    setAppState('space');
+    setAppMode('SPACE_3D');
   };
 
   return (
@@ -208,7 +208,7 @@ const HomeWorld = () => {
                     setNewSpaceOpen(false);
                     setName('New Space');
                     setIcon('🪐');
-                    setAppState('space');
+                    setAppMode('SPACE_3D');
                   }}
                 >
                   Create & Enter
@@ -291,7 +291,7 @@ const Edges = ({
 };
 
 const Toolbelt = ({ hush }: { hush: number }) => {
-  const { view, updateView, setAppState } = useMiCa();
+  const { view, updateView, setAppMode } = useMiCa();
   const group = useRef<THREE.Group>(null);
   const { camera } = useThree();
 
@@ -351,7 +351,7 @@ const Toolbelt = ({ hush }: { hush: number }) => {
           >
             {view.mode === 'observe' ? 'Observe / Hush' : 'Edit'}
           </button>
-          <button className="rounded-full bg-white/5 px-3 py-1" onClick={() => setAppState('home')}>
+          <button className="rounded-full bg-white/5 px-3 py-1" onClick={() => setAppMode('HOME_3D')}>
             Home
           </button>
         </div>
@@ -568,9 +568,9 @@ const SpaceWorld = () => {
 };
 
 const WorldRouter = () => {
-  const { appState, stepHush } = useMiCa();
+  const { appMode, stepHush } = useMiCa();
   useFrame((_, delta) => stepHush(delta));
-  return appState === 'home' ? <HomeWorld /> : <SpaceWorld />;
+  return appMode === 'HOME_3D' ? <HomeWorld /> : <SpaceWorld />;
 };
 
 export default function App() {

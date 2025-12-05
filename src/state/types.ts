@@ -81,3 +81,5 @@ export interface SearchResult {
   title: string;
   snippet: string;
 }
+
+export type AppMode = 'HOME_3D' | 'SPACE_3D';
