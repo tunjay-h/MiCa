@@ -64,6 +64,11 @@ export interface ViewState {
   };
   environment: 'white-room' | 'dome';
   edgeVisibility: 'neighborhood' | 'two-hop' | 'all';
+  mode?: 'observe' | 'edit';
+}
+
+export interface SpaceViewStateRecord extends ViewState {
+  spaceId: string;
 }
 
 export interface SpaceRecord {
@@ -75,8 +80,16 @@ export interface SpaceRecord {
   view: ViewState;
 }
 
+export interface AppSettings {
+  key: 'app';
+  lastOpenedSpaceId?: string;
+  schemaVersion: number;
+}
+
 export interface SearchResult {
   id: string;
   title: string;
   snippet: string;
 }
+
+export type AppMode = 'HOME_3D' | 'SPACE_3D';

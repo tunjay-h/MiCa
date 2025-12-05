@@ -1,25 +1,1064 @@
-import { useEffect } from 'react';
-import { NodePanel } from './components/NodePanel';
-import { SceneCanvas } from './scene/SceneCanvas';
-import { SpaceSwitcher } from './components/SpaceSwitcher';
-import { SearchBar } from './components/SearchBar';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { Float, GradientTexture, Html, Line, OrbitControls, Text } from '@react-three/drei';
+import * as THREE from 'three';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeSanitize from 'rehype-sanitize';
+import { nanoid } from './utils/nanoid';
 import { useMiCa } from './state/store';
-import { ImportExportPanel } from './components/ImportExportPanel';
+import { type ContentBlock, type NodeRecord } from './state/types';
+import './index.css';
 
-function Header() {
+const DomeEnvironment = ({ hush }: { hush: number }) => (
+  <mesh scale={[90, 60, 90]}>
+    <sphereGeometry args={[1, 64, 64]} />
+    <meshBasicMaterial side={1} transparent opacity={0.9 + (1 - hush) * 0.05}>
+      <GradientTexture stops={[0, 0.5, 1]} colors={['#0b1224', '#0e1a33', '#0b1224']} size={512} />
+    </meshBasicMaterial>
+  </mesh>
+);
+
+const WhiteRoomEnvironment = ({ hush }: { hush: number }) => (
+  <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -5, 0]}>
+    <planeGeometry args={[160, 160]} />
+    <meshBasicMaterial transparent opacity={0.7 + (1 - hush) * 0.1}>
+      <GradientTexture stops={[0, 1]} colors={['#0d1021', '#0a0c18']} size={256} />
+    </meshBasicMaterial>
+  </mesh>
+);
+
+const SpaceCard = ({
+  index,
+  total,
+  space,
+  selected,
+  onSelect,
+  onEnter
+}: {
+  index: number;
+  total: number;
+  space: { id: string; name: string; icon: string; updatedAt: number };
+  selected: boolean;
+  onSelect: () => void;
+  onEnter: () => void;
+}) => {
+  const angle = (index / total) * Math.PI * 1.2 - Math.PI * 0.6;
+  const radius = 6;
+  const x = Math.sin(angle) * radius;
+  const z = Math.cos(angle) * radius;
   return (
-    <header className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-      <div>
-        <p className="text-xs uppercase tracking-[0.3em] text-aurora">MiCa / Mind Canvas</p>
-        <h1 className="text-3xl font-semibold text-sand">Your personal planetarium for ideas</h1>
-        <p className="text-sm text-slate-400">Local-first, offline-capable, crafted for calm thinking.</p>
-      </div>
-      <div className="rounded-full border border-aurora/40 bg-aurora/10 px-4 py-2 text-xs text-aurora">
-        Dome mode • Hush-ready • Local only
-      </div>
-    </header>
+    <Float speed={1} rotationIntensity={0.1} position={[x, 0.4, -z]}>
+      <mesh
+        onClick={(event) => {
+          event.stopPropagation();
+          onSelect();
+        }}
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+          onEnter();
+        }}
+        scale={selected ? 1.2 : 1.05}
+        castShadow
+        receiveShadow
+        rotation={[0, -angle, 0]}
+      >
+        <planeGeometry args={[2.7, 3.6]} />
+        <meshStandardMaterial
+          color={selected ? '#1a2a4f' : '#10172b'}
+          transparent
+          opacity={selected ? 1 : 0.88}
+          emissive={selected ? '#4ad3e8' : '#000'}
+          emissiveIntensity={selected ? 0.15 : 0}
+        />
+        <Html
+          transform
+          occlude
+          position={[0, 0, 0.05]}
+          className="pointer-events-auto select-none"
+        >
+          <div
+            className={`w-40 space-y-2 rounded-2xl border p-4 text-sand shadow-lg ${
+              selected ? 'border-aurora/80 bg-aurora/10' : 'border-white/10 bg-white/5'
+            }`}
+          >
+            <div className="text-3xl">{space.icon}</div>
+            <div className="font-semibold leading-tight">{space.name}</div>
+            <p className="text-xs text-slate-400">
+              Updated {new Date(space.updatedAt).toLocaleDateString()}
+            </p>
+            <button
+              className="w-full rounded-full bg-aurora/20 px-3 py-1 text-sm text-aurora hover:bg-aurora/30"
+              onClick={onEnter}
+            >
+              Enter
+            </button>
+          </div>
+        </Html>
+      </mesh>
+    </Float>
   );
-}
+};
+
+const HomeWorld = () => {
+  const { spaces, addSpaceFromTemplate, setActiveSpace, setAppMode, importData, exportAll } = useMiCa();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [newSpaceOpen, setNewSpaceOpen] = useState(false);
+  const [name, setName] = useState('New Space');
+  const [icon, setIcon] = useState('🪐');
+  const [template, setTemplate] = useState('Blank Space');
+  const [selectedSpaceId, setSelectedSpaceId] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (spaces.length === 0) {
+      setSelectedSpaceId(undefined);
+      return;
+    }
+    if (!selectedSpaceId || !spaces.find((space) => space.id === selectedSpaceId)) {
+      setSelectedSpaceId(spaces[0].id);
+    }
+  }, [spaces, selectedSpaceId]);
+
+  const triggerImport = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    try {
+      const payload = JSON.parse(text);
+      await importData(payload);
+    } catch (error) {
+      console.error('Import failed', error);
+    }
+  };
+
+  const handleEnter = async (id?: string) => {
+    const targetId = id ?? selectedSpaceId ?? spaces[0]?.id;
+    if (!targetId) return;
+    await setActiveSpace(targetId);
+    setAppMode('SPACE_3D');
+  };
+
+  return (
+    <group>
+      <DomeEnvironment hush={1} />
+      <group position={[0, -2.6, 0]}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]}>
+          <circleGeometry args={[12, 64]} />
+          <meshBasicMaterial color="#0b1224" opacity={0.5} transparent />
+        </mesh>
+      </group>
+      {spaces.length === 0 && (
+        <Float position={[0, 0.8, -3]}>
+          <Html
+            center
+            className="pointer-events-auto select-none rounded-2xl border border-white/10 bg-white/5 px-6 py-4 text-center text-sand shadow-lg"
+          >
+            <p className="text-sm text-slate-300">No spaces yet.</p>
+            <p className="text-xs text-slate-400">Create one to see it appear in the dome.</p>
+          </Html>
+        </Float>
+      )}
+      {spaces.map((space, index) => (
+        <SpaceCard
+          key={space.id}
+          index={index}
+          total={Math.max(spaces.length, 4)}
+          space={space}
+          selected={selectedSpaceId === space.id}
+          onSelect={() => setSelectedSpaceId(space.id)}
+          onEnter={() => handleEnter(space.id)}
+        />
+      ))}
+      <Float position={[0, 2.4, -3]}>
+        <Html center className="pointer-events-auto w-[360px] rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur">
+          <div className="flex flex-col gap-3 text-sand">
+            <div>
+              <p className="text-xs uppercase tracking-[0.3em] text-aurora">MiCa / Dome Lobby</p>
+              <p className="text-lg font-semibold">Choose a space to enter its mind world.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="rounded-full bg-aurora/20 px-4 py-2 text-sm text-aurora hover:bg-aurora/30 disabled:opacity-40"
+                onClick={() => handleEnter()}
+                disabled={!selectedSpaceId}
+              >
+                Enter
+              </button>
+              <button
+                className="rounded-full bg-aurora/20 px-4 py-2 text-sm text-aurora hover:bg-aurora/30"
+                onClick={() => setNewSpaceOpen(true)}
+              >
+                New Space
+              </button>
+              <button
+                className="rounded-full border border-white/10 px-4 py-2 text-sm hover:border-aurora/60"
+                onClick={triggerImport}
+              >
+                Import Backup
+              </button>
+              <button
+                className="rounded-full border border-white/10 px-4 py-2 text-sm hover:border-aurora/60"
+                onClick={async () => {
+                  const data = await exportAll();
+                  const blob = new Blob([data], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const link = document.createElement('a');
+                  link.href = url;
+                  link.download = 'mica-backup.json';
+                  link.click();
+                  URL.revokeObjectURL(url);
+                }}
+              >
+                Export All
+              </button>
+            </div>
+          </div>
+          {newSpaceOpen && (
+            <div className="mt-4 space-y-3 rounded-2xl border border-white/10 bg-black/40 p-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-slate-200">Create a new space</p>
+                <button className="text-xs text-slate-400" onClick={() => setNewSpaceOpen(false)}>
+                  Close
+                </button>
+              </div>
+              <div className="space-y-2 text-sm">
+                <label className="flex items-center gap-2">
+                  <span className="text-slate-300">Name</span>
+                  <input
+                    className="flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sand"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                  />
+                </label>
+                <label className="flex items-center gap-2">
+                  <span className="text-slate-300">Icon</span>
+                  <input
+                    className="w-20 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-center text-xl"
+                    value={icon}
+                    onChange={(e) => setIcon(e.target.value)}
+                  />
+                </label>
+                <div className="space-y-1">
+                  <p className="text-slate-300">Template</p>
+                  <div className="flex flex-wrap gap-2">
+                    {['Blank Space', 'Research', 'Life OS', 'Startup'].map((preset) => (
+                      <button
+                        key={preset}
+                        className={`rounded-full px-3 py-1 text-xs ${
+                          template === preset ? 'bg-aurora/20 text-aurora' : 'bg-white/5 text-sand'
+                        }`}
+                        onClick={() => setTemplate(preset)}
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <button
+                  className="w-full rounded-full bg-aurora/30 px-4 py-2 text-sm font-semibold text-aurora"
+                  onClick={async () => {
+                    const createdId = await addSpaceFromTemplate(template, { name, icon });
+                    setNewSpaceOpen(false);
+                    setName('New Space');
+                    setIcon('🪐');
+                    if (createdId) {
+                      setSelectedSpaceId(createdId);
+                    }
+                  }}
+                >
+                  Create
+                </button>
+              </div>
+            </div>
+          )}
+          <input ref={fileInputRef} type="file" className="hidden" onChange={handleImport} />
+        </Html>
+      </Float>
+    </group>
+  );
+};
+
+const NodeInstances = ({
+  nodes,
+  selectedNodeId,
+  onSelect,
+  onFocus,
+  hush
+}: {
+  nodes: NodeRecord[];
+  selectedNodeId?: string;
+  onSelect: (id: string) => void;
+  onFocus: (id: string) => void;
+  hush: number;
+}) => (
+  <group>
+    {nodes.map((node, index) => {
+      const wobble = Math.sin((Date.now() * 0.001 + index) * 0.6) * 0.08 * (0.4 + hush * 0.6);
+      const selected = selectedNodeId === node.id;
+      return (
+        <Float
+          key={node.id}
+          speed={1.2}
+          floatIntensity={0.1}
+          position={[node.position.x, node.position.y + wobble, node.position.z]}
+          scale={selected ? 1.1 : 1}
+        >
+          <mesh
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelect(node.id);
+            }}
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+              onFocus(node.id);
+            }}
+            onPointerDown={(event) => {
+              if (event.detail === 2) {
+                event.stopPropagation();
+                onFocus(node.id);
+              }
+            }}
+          >
+            <sphereGeometry args={[0.25, 28, 28]} />
+            <meshStandardMaterial
+              color={selected ? '#c2ddff' : '#9fb4ff'}
+              emissive="#4ad3e8"
+              emissiveIntensity={0.5 + hush * 0.4 + (selected ? 0.3 : 0)}
+            />
+          </mesh>
+        </Float>
+      );
+    })}
+  </group>
+);
+
+const SelectionHalo = ({ node, hush }: { node?: NodeRecord; hush: number }) => {
+  const ref = useRef<THREE.Group>(null);
+  const { camera } = useThree();
+
+  useFrame(() => {
+    if (!ref.current || !node) return;
+    const target = new THREE.Vector3(node.position.x, node.position.y, node.position.z);
+    ref.current.position.lerp(target, 0.3);
+    ref.current.quaternion.slerp(camera.quaternion, 0.2);
+  });
+
+  if (!node) return null;
+
+  return (
+    <group ref={ref}>
+      <mesh>
+        <ringGeometry args={[0.36, 0.6, 48]} />
+        <meshBasicMaterial color="#4ad3e8" transparent opacity={0.35 * (0.6 + hush * 0.4)} />
+      </mesh>
+      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
+        <ringGeometry args={[0.3, 0.5, 48]} />
+        <meshBasicMaterial color="#7af6ff" transparent opacity={0.25 * (0.6 + hush * 0.4)} />
+      </mesh>
+    </group>
+  );
+};
+
+const Edges = ({
+  nodes,
+  edges,
+  visibleSet,
+  hush
+}: {
+  nodes: NodeRecord[];
+  edges: { id: string; from: string; to: string }[];
+  visibleSet: Set<string>;
+  hush: number;
+}) => {
+  const lookup = useMemo(() => Object.fromEntries(nodes.map((n) => [n.id, n])), [nodes]);
+  return (
+    <group>
+      {edges
+        .filter((edge) => visibleSet.has(edge.from) || visibleSet.has(edge.to))
+        .map((edge) => {
+          const from = lookup[edge.from];
+          const to = lookup[edge.to];
+          if (!from || !to) return null;
+          return (
+            <Line
+              key={edge.id}
+              points={[
+                [from.position.x, from.position.y, from.position.z],
+                [to.position.x, to.position.y, to.position.z]
+              ]}
+              color="#5d6a90"
+              linewidth={1}
+              transparent
+              opacity={0.3 + hush * 0.4}
+            />
+          );
+        })}
+    </group>
+  );
+};
+
+const Toolbelt = ({ hush }: { hush: number }) => {
+  const { view, updateView, resetView, setAppMode } = useMiCa();
+  const group = useRef<THREE.Group>(null);
+  const { camera } = useThree();
+
+  useFrame(() => {
+    if (!group.current) return;
+    const offset = 1.6;
+    const dir = camera.getWorldDirection(new THREE.Vector3()).normalize();
+    const pos = camera.position.clone().add(dir.multiplyScalar(3.3));
+    pos.y -= 1.2;
+    group.current.position.lerp(pos, 0.25);
+    group.current.quaternion.slerp(camera.quaternion, 0.2);
+  });
+
+  return (
+    <group ref={group}>
+      <Html
+        transform
+        occlude
+        position={[0, 0, 0]}
+        className="pointer-events-auto"
+      >
+        <div className="flex gap-2 rounded-full border border-white/10 bg-black/50 px-3 py-2 text-xs text-sand shadow-lg backdrop-blur"
+          style={{ opacity: 0.6 + hush * 0.4 }}
+        >
+          <button
+            className={`rounded-full px-3 py-1 ${view.environment === 'dome' ? 'bg-aurora/20 text-aurora' : 'bg-white/10'}`}
+            onClick={() => updateView({ environment: 'dome' })}
+          >
+            Dome
+          </button>
+          <button
+            className={`rounded-full px-3 py-1 ${view.environment === 'white-room' ? 'bg-aurora/20 text-aurora' : 'bg-white/10'}`}
+            onClick={() => updateView({ environment: 'white-room' })}
+          >
+            White Room
+          </button>
+          {(['neighborhood', 'two-hop', 'all'] as const).map((mode) => (
+            <button
+              key={mode}
+              className={`rounded-full px-3 py-1 capitalize ${
+                view.edgeVisibility === mode ? 'bg-white/15 text-sand' : 'bg-white/5 text-slate-300'
+              }`}
+              onClick={() => updateView({ edgeVisibility: mode })}
+            >
+              {mode}
+            </button>
+          ))}
+          <button
+            className="rounded-full bg-white/5 px-3 py-1"
+            onClick={() => resetView()}
+          >
+            Reset
+          </button>
+          <button
+            className={`rounded-full px-3 py-1 ${view.mode === 'observe' ? 'bg-aurora/20 text-aurora' : 'bg-amber-300/20 text-amber-200'}`}
+            onClick={() => updateView({ mode: view.mode === 'observe' ? 'edit' : 'observe' })}
+          >
+            {view.mode === 'observe' ? 'Observe / Hush' : 'Edit'}
+          </button>
+          <button className="rounded-full bg-white/5 px-3 py-1" onClick={() => setAppMode('HOME_3D')}>
+            Home
+          </button>
+        </div>
+      </Html>
+    </group>
+  );
+};
+
+const detectEmbedProvider = (url: string) => {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname.includes('youtube.com') || parsed.hostname === 'youtu.be') {
+      const id = parsed.searchParams.get('v') ?? parsed.pathname.replace('/', '');
+      if (id) {
+        return {
+          provider: 'youtube' as const,
+          embedUrl: `https://www.youtube.com/embed/${id}`
+        };
+      }
+    }
+    if (parsed.hostname.includes('vimeo.com')) {
+      const id = parsed.pathname.split('/').filter(Boolean)[0];
+      if (id) {
+        return {
+          provider: 'vimeo' as const,
+          embedUrl: `https://player.vimeo.com/video/${id}`
+        };
+      }
+    }
+    if (parsed.hostname.includes('figma.com')) {
+      return {
+        provider: 'figma' as const,
+        embedUrl: `https://www.figma.com/embed?embed_host=share&url=${encodeURIComponent(url)}`
+      };
+    }
+  } catch {
+    /* noop */
+  }
+  return { provider: 'unknown' as const, embedUrl: undefined };
+};
+
+const BlockView = ({ block }: { block: ContentBlock }) => {
+  if (block.type === 'markdown') {
+    return (
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeSanitize]}
+        className="prose prose-invert prose-sm max-w-none"
+      >
+        {block.text}
+      </ReactMarkdown>
+    );
+  }
+  if (block.type === 'image') {
+    return (
+      <div className="overflow-hidden rounded-xl border border-white/10">
+        <img src={block.url} alt={block.alt ?? ''} className="max-h-40 w-full object-cover" />
+        {block.alt ? <p className="px-2 py-1 text-[10px] text-slate-300">{block.alt}</p> : null}
+      </div>
+    );
+  }
+  if (block.type === 'link') {
+    return (
+      <a
+        href={block.url}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1 text-xs text-aurora hover:border-aurora/60"
+      >
+        <span className="truncate">{block.label ?? block.url}</span>
+      </a>
+    );
+  }
+
+  const embed = detectEmbedProvider(block.url);
+  if (!embed.embedUrl || embed.provider === 'unknown') {
+    return (
+      <div className="space-y-1 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-100">
+        <p>Embed not allowed for this source.</p>
+        <a className="text-aurora underline" href={block.url} target="_blank" rel="noreferrer">
+          Open link
+        </a>
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-white/10">
+      <iframe
+        src={embed.embedUrl}
+        title="Embedded content"
+        className="h-48 w-full"
+        sandbox="allow-scripts allow-same-origin allow-popups"
+        allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
+      />
+    </div>
+  );
+};
+
+const NodeInspector = ({ node, nodes, hush }: { node: NodeRecord | undefined; nodes: NodeRecord[]; hush: number }) => {
+  const { deleteNode, createNode, linkNodes, selectNode, updateView, updateNode, view } = useMiCa();
+  const anchor = useRef<THREE.Group>(null);
+  const { camera } = useThree();
+  const [linkTargetId, setLinkTargetId] = useState<string | undefined>(undefined);
+  const [addType, setAddType] = useState<ContentBlock['type']>('markdown');
+  const [localNode, setLocalNode] = useState<NodeRecord | undefined>(node);
+
+  useEffect(() => {
+    setLocalNode(node);
+    setLinkTargetId(undefined);
+  }, [node]);
+
+  useFrame(() => {
+    if (!anchor.current || !node) return;
+    const target = new THREE.Vector3(node.position.x, node.position.y + 0.8, node.position.z);
+    anchor.current.position.lerp(target, 0.35);
+    anchor.current.quaternion.slerp(camera.quaternion, 0.18);
+  });
+
+  if (!node || !localNode) return null;
+
+  const isEditing = view.mode === 'edit';
+
+  const commitNode = async (next: NodeRecord) => {
+    setLocalNode(next);
+    await updateNode(next.id, next);
+  };
+
+  const mutateNode = (updater: (draft: NodeRecord) => void) => {
+    if (!localNode) return;
+    const draft: NodeRecord = {
+      ...localNode,
+      blocks: localNode.blocks.map((block) => ({ ...block }))
+    };
+    updater(draft);
+    void commitNode(draft);
+  };
+
+  const addBlock = (type: ContentBlock['type']) => {
+    mutateNode((draft) => {
+      if (!localNode) return;
+      const block: ContentBlock =
+        type === 'markdown'
+          ? ({ id: nanoid(), type: 'markdown', text: 'Write here…' } as ContentBlock)
+          : type === 'image'
+            ? ({ id: nanoid(), type: 'image', url: 'https://placekitten.com/640/360', alt: 'Image' } as ContentBlock)
+            : type === 'link'
+              ? ({ id: nanoid(), type: 'link', url: 'https://example.com', label: 'Link' } as ContentBlock)
+              : (() => {
+                  const embed = detectEmbedProvider('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+                  return {
+                    id: nanoid(),
+                    type: 'embed',
+                    url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                    provider: embed.provider
+                  } as ContentBlock;
+                })();
+      draft.blocks = [...draft.blocks, block];
+    });
+  };
+
+  const moveBlock = (index: number, delta: number) => {
+    mutateNode((draft) => {
+      const next = [...draft.blocks];
+      const target = index + delta;
+      if (target < 0 || target >= next.length) return;
+      const [item] = next.splice(index, 1);
+      next.splice(target, 0, item);
+      draft.blocks = next;
+    });
+  };
+
+  const updateBlock = (blockId: string, updates: Partial<ContentBlock>) => {
+    mutateNode((draft) => {
+      draft.blocks = draft.blocks.map((block) =>
+        block.id === blockId ? ({ ...block, ...updates } as ContentBlock) : block
+      );
+    });
+  };
+
+  const removeBlock = (blockId: string) => {
+    mutateNode((draft) => {
+      draft.blocks = draft.blocks.filter((block) => block.id !== blockId);
+    });
+  };
+
+  return (
+    <group ref={anchor}>
+      <Html transform occlude className="pointer-events-auto">
+        <div
+          className="w-80 space-y-3 rounded-2xl border border-white/10 bg-black/70 p-4 text-sand shadow-xl backdrop-blur"
+          style={{ opacity: 0.48 + hush * 0.52 }}
+        >
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.2em] text-aurora">Node</p>
+              {isEditing ? (
+                <input
+                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm"
+                  value={localNode.title}
+                  onChange={(e) => mutateNode((draft) => void (draft.title = e.target.value))}
+                />
+              ) : (
+                <p className="text-lg font-semibold leading-tight">{localNode.title}</p>
+              )}
+              <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-slate-300">
+                {isEditing ? (
+                  <input
+                    className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1"
+                    value={localNode.tags.join(', ')}
+                    onChange={(e) =>
+                      mutateNode((draft) => {
+                        draft.tags = e.target.value
+                          .split(',')
+                          .map((tag) => tag.trim())
+                          .filter(Boolean);
+                      })
+                    }
+                    placeholder="tags, comma separated"
+                  />
+                ) : (
+                  localNode.tags.map((tag) => (
+                    <span key={tag} className="rounded-full bg-white/5 px-2 py-1">
+                      {tag}
+                    </span>
+                  ))
+                )}
+                <span className="rounded-full bg-white/5 px-2 py-1">Importance {localNode.importance}</span>
+              </div>
+              {isEditing ? (
+                <input
+                  type="range"
+                  min={1}
+                  max={5}
+                  value={localNode.importance}
+                  onChange={(e) =>
+                    mutateNode((draft) =>
+                      void (draft.importance = Number(e.target.value) as NodeRecord['importance'])
+                    )
+                  }
+                  className="mt-1 w-full"
+                />
+              ) : null}
+            </div>
+            <div className="flex flex-col items-end gap-1 text-[11px] text-slate-400">
+              <button onClick={() => selectNode(undefined)} className="text-slate-400">
+                Clear
+              </button>
+              <button
+                onClick={() => updateView({ mode: isEditing ? 'observe' : 'edit' })}
+                className="rounded-full border border-white/10 px-3 py-1 text-xs"
+              >
+                {isEditing ? 'Observe' : 'Edit'}
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-2 rounded-xl border border-white/10 bg-white/5 p-3">
+            {isEditing ? (
+              <div className="space-y-2 text-xs text-slate-200">
+                {localNode.blocks.map((block, index) => (
+                  <div key={block.id} className="space-y-2 rounded-lg border border-white/10 bg-black/40 p-2">
+                    <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.2em] text-slate-400">
+                      <span>{block.type}</span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          className="rounded-full border border-white/10 px-2 py-1"
+                          disabled={index === 0}
+                          onClick={() => moveBlock(index, -1)}
+                        >
+                          ↑
+                        </button>
+                        <button
+                          className="rounded-full border border-white/10 px-2 py-1"
+                          disabled={index === localNode.blocks.length - 1}
+                          onClick={() => moveBlock(index, 1)}
+                        >
+                          ↓
+                        </button>
+                        <button
+                          className="rounded-full border border-red-400/40 px-2 py-1 text-red-200"
+                          onClick={() => removeBlock(block.id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                    {block.type === 'markdown' && (
+                      <textarea
+                        className="h-20 w-full rounded-lg border border-white/10 bg-white/5 p-2 text-xs"
+                        value={block.text}
+                        onChange={(e) => updateBlock(block.id, { text: e.target.value })}
+                      />
+                    )}
+                    {block.type === 'image' && (
+                      <div className="space-y-1">
+                        <input
+                          className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs"
+                          value={block.url}
+                          onChange={(e) => updateBlock(block.id, { url: e.target.value })}
+                          placeholder="Image URL"
+                        />
+                        <input
+                          className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs"
+                          value={block.alt ?? ''}
+                          onChange={(e) => updateBlock(block.id, { alt: e.target.value })}
+                          placeholder="Alt text"
+                        />
+                      </div>
+                    )}
+                    {block.type === 'link' && (
+                      <div className="space-y-1">
+                        <input
+                          className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs"
+                          value={block.url}
+                          onChange={(e) => updateBlock(block.id, { url: e.target.value })}
+                          placeholder="Link URL"
+                        />
+                        <input
+                          className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs"
+                          value={block.label ?? ''}
+                          onChange={(e) => updateBlock(block.id, { label: e.target.value })}
+                          placeholder="Label"
+                        />
+                      </div>
+                    )}
+                    {block.type === 'embed' && (
+                      <div className="space-y-1 text-xs">
+                        <input
+                          className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1"
+                          value={block.url}
+                          onChange={(e) => {
+                            const provider = detectEmbedProvider(e.target.value).provider;
+                            updateBlock(block.id, { url: e.target.value, provider });
+                          }}
+                          placeholder="Embed URL (YouTube, Vimeo, Figma)"
+                        />
+                        <p className="text-[10px] text-slate-400">Provider: {block.provider}</p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                <div className="flex items-center gap-2">
+                  <select
+                    value={addType}
+                    onChange={(e) => setAddType(e.target.value as ContentBlock['type'])}
+                    className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs"
+                  >
+                    <option value="markdown">Markdown</option>
+                    <option value="image">Image</option>
+                    <option value="link">Link</option>
+                    <option value="embed">Embed</option>
+                  </select>
+                  <button
+                    className="rounded-full bg-aurora/20 px-3 py-1 text-xs text-aurora"
+                    onClick={() => addBlock(addType)}
+                  >
+                    Add block
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3 text-sm text-slate-200">
+                {localNode.blocks.map((block) => (
+                  <div key={block.id} className="rounded-lg bg-black/30 p-2">
+                    <BlockView block={block} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-2 text-xs">
+            <button
+              className="rounded-full bg-aurora/20 px-3 py-1 text-aurora"
+              onClick={() => createNode({ parentId: node.id, title: 'New Thought' })}
+            >
+              Add child
+            </button>
+            <div className="flex items-center gap-2 rounded-full border border-white/10 px-2 py-1">
+              <select
+                className="bg-transparent text-sand"
+                value={linkTargetId ?? ''}
+                onChange={(e) => setLinkTargetId(e.target.value)}
+              >
+                <option value="">Link to…</option>
+                {nodes
+                  .filter((candidate) => candidate.id !== node.id)
+                  .map((candidate) => (
+                    <option key={candidate.id} value={candidate.id}>
+                      {candidate.title}
+                    </option>
+                  ))}
+              </select>
+              <button
+                className="rounded-full bg-white/10 px-2 py-1"
+                disabled={!linkTargetId}
+                onClick={() => {
+                  if (linkTargetId) {
+                    void linkNodes(node.id, linkTargetId, 'related');
+                  }
+                }}
+              >
+                Link
+              </button>
+            </div>
+            <button
+              className="rounded-full border border-red-400/40 px-3 py-1 text-red-200"
+              onClick={() => deleteNode(node.id)}
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      </Html>
+    </group>
+  );
+};
+
+const CommandBar = ({ visible, onClose, hush }: { visible: boolean; onClose: () => void; hush: number }) => {
+  const { search, selectNode } = useMiCa();
+  const [query, setQuery] = useState('');
+  const results = useMemo(() => (visible ? search(query) : []), [visible, query, search]);
+
+  if (!visible) return null;
+
+  return (
+    <Html center transform occlude position={[0, 1.5, -3]} className="pointer-events-auto">
+      <div
+        className="w-[420px] space-y-2 rounded-2xl border border-white/10 bg-black/60 p-4 text-sand shadow-2xl backdrop-blur"
+        style={{ opacity: 0.5 + hush * 0.5 }}
+      >
+        <div className="flex items-center justify-between text-xs text-slate-300">
+          <p>Command / Search</p>
+          <button onClick={onClose} className="text-slate-400">
+            Esc
+          </button>
+        </div>
+        <input
+          autoFocus
+          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-sand"
+          placeholder="Jump to node…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <div className="max-h-48 space-y-1 overflow-auto text-sm">
+          {results.map((result) => (
+            <button
+              key={result.id}
+              className="w-full rounded-lg bg-white/5 px-3 py-2 text-left hover:bg-aurora/10"
+              onClick={() => {
+                selectNode(result.id);
+                onClose();
+              }}
+            >
+              <p className="font-semibold">{result.title}</p>
+              <p className="text-xs text-slate-400">{result.snippet}</p>
+            </button>
+          ))}
+          {results.length === 0 && <p className="text-xs text-slate-500">No matches</p>}
+        </div>
+      </div>
+    </Html>
+  );
+};
+
+const SpaceWorld = () => {
+  const { nodes, edges, view, updateView, selectedNodeId, selectNode, hush } = useMiCa();
+  const controls = useRef<any>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const { camera } = useThree();
+
+  const nodeLookup = useMemo(() => Object.fromEntries(nodes.map((node) => [node.id, node])), [nodes]);
+  const selectedNode = selectedNodeId ? nodeLookup[selectedNodeId] : undefined;
+
+  const focusNode = useCallback(
+    (nodeId: string) => {
+      const node = nodeLookup[nodeId];
+      if (!node) return;
+      selectNode(nodeId);
+      const target = new THREE.Vector3(node.position.x, node.position.y, node.position.z);
+      const currentTarget = controls.current?.target ?? new THREE.Vector3(...view.camera.target);
+      const direction = camera.position.clone().sub(currentTarget);
+      const distance = Math.max(direction.length(), 4);
+      const newPosition = target.clone().add(direction.normalize().multiplyScalar(distance));
+
+      camera.position.copy(newPosition);
+      if (controls.current) {
+        controls.current.target.copy(target);
+        controls.current.update();
+      }
+
+      updateView({
+        camera: {
+          position: [newPosition.x, newPosition.y, newPosition.z],
+          target: [target.x, target.y, target.z]
+        }
+      });
+    },
+    [camera, nodeLookup, selectNode, updateView, view.camera.target]
+  );
+
+  const visibleSet = useMemo(() => {
+    if (view.edgeVisibility === 'all') return new Set(nodes.map((node) => node.id));
+    const focus = selectedNodeId ?? nodes[0]?.id;
+    const set = new Set<string>();
+    if (!focus) return set;
+    set.add(focus);
+    edges.forEach((edge) => {
+      if (edge.from === focus || edge.to === focus) {
+        set.add(edge.from);
+        set.add(edge.to);
+      }
+    });
+    if (view.edgeVisibility === 'two-hop') {
+      edges.forEach((edge) => {
+        if (set.has(edge.from) || set.has(edge.to)) {
+          set.add(edge.from);
+          set.add(edge.to);
+        }
+      });
+    }
+    return set;
+  }, [edges, nodes, selectedNodeId, view.edgeVisibility]);
+
+  useEffect(() => {
+    if (controls.current) {
+      controls.current.target.set(view.camera.target[0], view.camera.target[1], view.camera.target[2]);
+      controls.current.update();
+    }
+    camera.position.set(view.camera.position[0], view.camera.position[1], view.camera.position[2]);
+  }, [view.camera.position, view.camera.target, camera]);
+
+  const persistTimer = useRef(0);
+  useFrame(({ camera }, delta) => {
+    if (!controls.current) return;
+    persistTimer.current += delta;
+    if (persistTimer.current > 0.4) {
+      persistTimer.current = 0;
+      updateView({ camera: { position: [camera.position.x, camera.position.y, camera.position.z], target: view.camera.target } });
+    }
+  });
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === '/') {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+      if (event.key === 'Escape') {
+        setSearchOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  const Env = view.environment === 'dome' ? DomeEnvironment : WhiteRoomEnvironment;
+
+  return (
+    <group onPointerMissed={() => selectNode(undefined)}>
+      <Env hush={hush} />
+      <OrbitControls ref={controls} enablePan={false} enableDamping dampingFactor={0.08} />
+      <ambientLight intensity={0.8} />
+      <pointLight position={[10, 12, 8]} intensity={1.2} />
+      <NodeInstances nodes={nodes} selectedNodeId={selectedNodeId} onSelect={selectNode} onFocus={focusNode} hush={hush} />
+      <SelectionHalo node={selectedNode} hush={hush} />
+      <Edges nodes={nodes} edges={edges} visibleSet={visibleSet} hush={hush} />
+      <Toolbelt hush={hush} />
+      <NodeInspector node={selectedNode} nodes={nodes} hush={hush} />
+      <CommandBar visible={searchOpen} onClose={() => setSearchOpen(false)} hush={hush} />
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -3, 0]}>
+        <circleGeometry args={[18, 64]} />
+        <meshBasicMaterial color="#0f1324" transparent opacity={0.5 + hush * 0.2} />
+      </mesh>
+      {nodes.slice(0, 12).map((node) => (
+        <Text
+          key={node.id}
+          position={[node.position.x, node.position.y + 0.4, node.position.z]}
+          fontSize={0.26}
+          color={selectedNodeId === node.id ? '#4ad3e8' : '#dce3ff'}
+          anchorX="center"
+          anchorY="middle"
+        >
+          {node.title}
+        </Text>
+      ))}
+    </group>
+  );
+};
+
+const WorldRouter = () => {
+  const { appMode, stepHush } = useMiCa();
+  useFrame((_, delta) => stepHush(delta));
+  return appMode === 'HOME_3D' ? <HomeWorld /> : <SpaceWorld />;
+};
 
 export default function App() {
   const { init, initialized } = useMiCa();
@@ -30,29 +1069,23 @@ export default function App() {
 
   if (!initialized) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-midnight text-sand">
+      <div className="flex min-h-screen items-center justify-center bg-black text-sand">
         <div className="space-y-2 text-center">
           <p className="text-sm text-slate-400">Booting MiCa</p>
-          <p className="text-xl font-semibold">Preparing spaces…</p>
+          <p className="text-xl font-semibold">Preparing dome…</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-transparent px-4 py-6 md:px-10 md:py-8">
-      <div className="mx-auto flex max-w-6xl flex-col gap-6">
-        <Header />
-        <SearchBar />
-        <SceneCanvas />
-        <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-          <SpaceSwitcher />
-          <NodePanel />
-        </div>
-        <ImportExportPanel />
-        <footer className="rounded-xl border border-white/5 bg-white/5 px-4 py-3 text-xs text-slate-400">
-          Local-only by default • IndexedDB powered • Offline-ready via PWA. Future-proofed for XR + AI helpers.
-        </footer>
+    <div className="relative h-screen w-full bg-black">
+      <Canvas camera={{ position: [0, 3, 10], fov: 52 }} gl={{ antialias: true }}>
+        <color attach="background" args={[0.02, 0.04, 0.09]} />
+        <WorldRouter />
+      </Canvas>
+      <div className="pointer-events-none absolute left-4 top-4 text-xs uppercase tracking-[0.3em] text-aurora">
+        MiCa Immersive Home
       </div>
     </div>
   );

@@ -1,25 +1,34 @@
 import { nanoid } from '../utils/nanoid';
-import { type EdgeRecord, type NodeRecord, type SpaceRecord, type ViewState } from '../state/types';
+import {
+  type EdgeRecord,
+  type NodeRecord,
+  type SpaceRecord,
+  type SpaceViewStateRecord,
+  type ViewState
+} from '../state/types';
 
 interface TemplatePayload {
   spaces: SpaceRecord[];
   nodes: NodeRecord[];
   edges: EdgeRecord[];
+  viewStates: SpaceViewStateRecord[];
 }
 
 interface TemplateInstance {
   space: SpaceRecord;
   nodes: NodeRecord[];
   edges: EdgeRecord[];
+  viewState: SpaceViewStateRecord;
 }
 
-const defaultView = (): ViewState => ({
+const defaultView = (environment: ViewState['environment'] = 'dome'): ViewState => ({
   camera: {
     position: [8, 6, 10],
     target: [0, 0, 0]
   },
-  environment: 'dome',
-  edgeVisibility: 'neighborhood'
+  environment,
+  edgeVisibility: 'neighborhood',
+  mode: 'observe'
 });
 
 const createNode = (
@@ -54,17 +63,17 @@ const connect = (spaceId: string, from: NodeRecord, to: NodeRecord, relation?: s
 });
 
 const TEMPLATE_OPTIONS = [
-  { key: 'blank', name: 'Blank Space', icon: '🌀' },
-  { key: 'research', name: 'Research Brain', icon: '🔬' },
-  { key: 'life', name: 'Life OS', icon: '🌿' },
-  { key: 'startup', name: 'Startup Map', icon: '🚀' }
+  { key: 'blank', name: 'Blank Space', icon: '🌀', environment: 'dome' as const },
+  { key: 'research', name: 'Research Brain', icon: '🔬', environment: 'dome' as const },
+  { key: 'life', name: 'Life OS', icon: '🌿', environment: 'dome' as const },
+  { key: 'startup', name: 'Startup Map', icon: '🚀', environment: 'white-room' as const }
 ] as const;
 
 export type TemplateKey = (typeof TEMPLATE_OPTIONS)[number]['key'];
 
 const buildTemplate = (template: (typeof TEMPLATE_OPTIONS)[number]): TemplateInstance => {
   const spaceId = nanoid();
-  const view = defaultView();
+  const view = defaultView(template.environment);
   const space: SpaceRecord = {
     id: spaceId,
     name: template.name,
@@ -155,7 +164,7 @@ const buildTemplate = (template: (typeof TEMPLATE_OPTIONS)[number]): TemplateIns
     });
   }
 
-  return { space, nodes: nodesForTemplate, edges };
+  return { space, nodes: nodesForTemplate, edges, viewState: { ...view, spaceId } };
 };
 
 export const buildTemplates = (): TemplatePayload => {
@@ -163,7 +172,8 @@ export const buildTemplates = (): TemplatePayload => {
   return {
     spaces: payloads.map((payload) => payload.space),
     nodes: payloads.flatMap((payload) => payload.nodes),
-    edges: payloads.flatMap((payload) => payload.edges)
+    edges: payloads.flatMap((payload) => payload.edges),
+    viewStates: payloads.map((payload) => payload.viewState)
   };
 };
 
