@@ -28,14 +28,16 @@ const SpaceCard = ({
   index,
   total,
   space,
-  onEnter,
-  onFocus
+  selected,
+  onSelect,
+  onEnter
 }: {
   index: number;
   total: number;
   space: { id: string; name: string; icon: string; updatedAt: number };
+  selected: boolean;
+  onSelect: () => void;
   onEnter: () => void;
-  onFocus: () => void;
 }) => {
   const angle = (index / total) * Math.PI * 1.2 - Math.PI * 0.6;
   const radius = 6;
@@ -44,28 +46,47 @@ const SpaceCard = ({
   return (
     <Float speed={1} rotationIntensity={0.1} position={[x, 0.4, -z]}>
       <mesh
-        onClick={onEnter}
-        onPointerOver={onFocus}
-        scale={1.1}
+        onClick={(event) => {
+          event.stopPropagation();
+          onSelect();
+        }}
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+          onEnter();
+        }}
+        scale={selected ? 1.2 : 1.05}
         castShadow
         receiveShadow
         rotation={[0, -angle, 0]}
       >
-        <planeGeometry args={[2.6, 3.4]} />
-        <meshStandardMaterial color="#10172b" transparent opacity={0.88} />
+        <planeGeometry args={[2.7, 3.6]} />
+        <meshStandardMaterial
+          color={selected ? '#1a2a4f' : '#10172b'}
+          transparent
+          opacity={selected ? 1 : 0.88}
+          emissive={selected ? '#4ad3e8' : '#000'}
+          emissiveIntensity={selected ? 0.15 : 0}
+        />
         <Html
           transform
           occlude
           position={[0, 0, 0.05]}
           className="pointer-events-auto select-none"
         >
-          <div className="w-40 space-y-2 rounded-2xl border border-white/10 bg-white/5 p-4 text-sand shadow-lg">
+          <div
+            className={`w-40 space-y-2 rounded-2xl border p-4 text-sand shadow-lg ${
+              selected ? 'border-aurora/80 bg-aurora/10' : 'border-white/10 bg-white/5'
+            }`}
+          >
             <div className="text-3xl">{space.icon}</div>
             <div className="font-semibold leading-tight">{space.name}</div>
             <p className="text-xs text-slate-400">
               Updated {new Date(space.updatedAt).toLocaleDateString()}
             </p>
-            <button className="w-full rounded-full bg-aurora/20 px-3 py-1 text-sm text-aurora hover:bg-aurora/30">
+            <button
+              className="w-full rounded-full bg-aurora/20 px-3 py-1 text-sm text-aurora hover:bg-aurora/30"
+              onClick={onEnter}
+            >
               Enter
             </button>
           </div>
@@ -82,6 +103,17 @@ const HomeWorld = () => {
   const [name, setName] = useState('New Space');
   const [icon, setIcon] = useState('🪐');
   const [template, setTemplate] = useState('Blank Space');
+  const [selectedSpaceId, setSelectedSpaceId] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (spaces.length === 0) {
+      setSelectedSpaceId(undefined);
+      return;
+    }
+    if (!selectedSpaceId || !spaces.find((space) => space.id === selectedSpaceId)) {
+      setSelectedSpaceId(spaces[0].id);
+    }
+  }, [spaces, selectedSpaceId]);
 
   const triggerImport = () => {
     fileInputRef.current?.click();
@@ -99,8 +131,10 @@ const HomeWorld = () => {
     }
   };
 
-  const handleEnter = async (id: string) => {
-    await setActiveSpace(id);
+  const handleEnter = async (id?: string) => {
+    const targetId = id ?? selectedSpaceId ?? spaces[0]?.id;
+    if (!targetId) return;
+    await setActiveSpace(targetId);
     setAppMode('SPACE_3D');
   };
 
@@ -113,14 +147,26 @@ const HomeWorld = () => {
           <meshBasicMaterial color="#0b1224" opacity={0.5} transparent />
         </mesh>
       </group>
+      {spaces.length === 0 && (
+        <Float position={[0, 0.8, -3]}>
+          <Html
+            center
+            className="pointer-events-auto select-none rounded-2xl border border-white/10 bg-white/5 px-6 py-4 text-center text-sand shadow-lg"
+          >
+            <p className="text-sm text-slate-300">No spaces yet.</p>
+            <p className="text-xs text-slate-400">Create one to see it appear in the dome.</p>
+          </Html>
+        </Float>
+      )}
       {spaces.map((space, index) => (
         <SpaceCard
           key={space.id}
           index={index}
           total={Math.max(spaces.length, 4)}
           space={space}
+          selected={selectedSpaceId === space.id}
+          onSelect={() => setSelectedSpaceId(space.id)}
           onEnter={() => handleEnter(space.id)}
-          onFocus={() => setName(space.name)}
         />
       ))}
       <Float position={[0, 2.4, -3]}>
@@ -131,6 +177,13 @@ const HomeWorld = () => {
               <p className="text-lg font-semibold">Choose a space to enter its mind world.</p>
             </div>
             <div className="flex flex-wrap gap-2">
+              <button
+                className="rounded-full bg-aurora/20 px-4 py-2 text-sm text-aurora hover:bg-aurora/30 disabled:opacity-40"
+                onClick={() => handleEnter()}
+                disabled={!selectedSpaceId}
+              >
+                Enter
+              </button>
               <button
                 className="rounded-full bg-aurora/20 px-4 py-2 text-sm text-aurora hover:bg-aurora/30"
                 onClick={() => setNewSpaceOpen(true)}
@@ -204,14 +257,16 @@ const HomeWorld = () => {
                 <button
                   className="w-full rounded-full bg-aurora/30 px-4 py-2 text-sm font-semibold text-aurora"
                   onClick={async () => {
-                    await addSpaceFromTemplate(template, { name, icon });
+                    const createdId = await addSpaceFromTemplate(template, { name, icon });
                     setNewSpaceOpen(false);
                     setName('New Space');
                     setIcon('🪐');
-                    setAppMode('SPACE_3D');
+                    if (createdId) {
+                      setSelectedSpaceId(createdId);
+                    }
                   }}
                 >
-                  Create & Enter
+                  Create
                 </button>
               </div>
             </div>
