@@ -8,12 +8,13 @@ import rehypeSanitize from 'rehype-sanitize';
 import { nanoid } from './utils/nanoid';
 import { useMiCa } from './state/store';
 import { type ContentBlock, type NodeRecord } from './state/types';
+import { ResilientImage } from './components/ResilientImage';
 import './index.css';
 
 const DomeEnvironment = ({ hush }: { hush: number }) => (
   <mesh scale={[90, 60, 90]}>
     <sphereGeometry args={[1, 64, 64]} />
-    <meshBasicMaterial side={1} transparent opacity={0.9 + (1 - hush) * 0.05}>
+    <meshBasicMaterial side={1} transparent opacity={0.9 - hush * 0.08}>
       <GradientTexture stops={[0, 0.5, 1]} colors={['#0b1224', '#0e1a33', '#0b1224']} size={512} />
     </meshBasicMaterial>
   </mesh>
@@ -22,11 +23,36 @@ const DomeEnvironment = ({ hush }: { hush: number }) => (
 const WhiteRoomEnvironment = ({ hush }: { hush: number }) => (
   <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -5, 0]}>
     <planeGeometry args={[160, 160]} />
-    <meshBasicMaterial transparent opacity={0.7 + (1 - hush) * 0.1}>
+    <meshBasicMaterial transparent opacity={0.74 - hush * 0.12}>
       <GradientTexture stops={[0, 1]} colors={['#0d1021', '#0a0c18']} size={256} />
     </meshBasicMaterial>
   </mesh>
 );
+
+const HushFog = ({ hush }: { hush: number }) => {
+  const { scene } = useThree();
+  const fogRef = useRef<THREE.Fog | null>(null);
+
+  useEffect(() => {
+    const fog = fogRef.current ?? new THREE.Fog('#0a1024', 12, 52);
+    fogRef.current = fog;
+    const previousFog = scene.fog;
+    scene.fog = fog;
+    return () => {
+      scene.fog = previousFog;
+    };
+  }, [scene]);
+
+  useEffect(() => {
+    const fog = fogRef.current;
+    if (!fog) return;
+    fog.color.set('#0a1024');
+    fog.near = 12 + hush * 3.5;
+    fog.far = Math.max(fog.near + 12, 52 - hush * 12);
+  }, [hush]);
+
+  return null;
+};
 
 const SpaceCard = ({
   index,
@@ -288,7 +314,8 @@ const NodeInstances = ({
   onSelect,
   onFocus,
   hush,
-  linkingFromId
+  linkingFromId,
+  tagFilteredSet
 }: {
   nodes: NodeRecord[];
   selectedNodeId?: string;
@@ -296,6 +323,7 @@ const NodeInstances = ({
   onFocus: (id: string) => void;
   hush: number;
   linkingFromId?: string;
+  tagFilteredSet: Set<string>;
 }) => {
   const [spawnedAt, setSpawnedAt] = useState<Record<string, number>>({});
 
@@ -320,11 +348,13 @@ const NodeInstances = ({
   return (
     <group>
       {nodes.map((node, index) => {
-        const wobble = Math.sin((Date.now() * 0.001 + index) * 0.6) * 0.08 * (0.4 + hush * 0.6);
+        const wobble =
+          Math.sin((Date.now() * 0.001 + index) * 0.6) * (0.12 - hush * 0.06);
         const selected = selectedNodeId === node.id;
+        const matchesFilter = tagFilteredSet.has(node.id);
         const born = spawnedAt[node.id];
         const age = born ? Math.min((performance.now() - born) / 800, 1) : 1;
-        const growth = born ? 0.7 + 0.35 * Math.sin((age * Math.PI) / 2) : 1;
+        const growth = (born ? 0.7 + 0.35 * Math.sin((age * Math.PI) / 2) : 1) * (matchesFilter ? 1 : 0.85);
         const linkSource = linkingFromId === node.id;
         const linkable = linkingFromId && linkingFromId !== node.id;
         const baseScale = (selected ? 1.1 : 1) * growth;
@@ -355,11 +385,11 @@ const NodeInstances = ({
             >
               <sphereGeometry args={[0.25, 28, 28]} />
               <meshStandardMaterial
-                color={linkSource ? '#f5c97a' : selected ? '#c2ddff' : '#9fb4ff'}
-                emissive={linkable ? '#7af6ff' : '#4ad3e8'}
-                emissiveIntensity={0.45 + hush * 0.35 + (selected ? 0.2 : 0) + (linkable ? 0.2 : 0)}
+                color={linkSource ? '#f5c97a' : selected ? '#c2ddff' : matchesFilter ? '#9fb4ff' : '#566185'}
+                emissive={linkable ? '#7af6ff' : matchesFilter ? '#4ad3e8' : '#2c3350'}
+                emissiveIntensity={(0.7 - hush * 0.25 + (selected ? 0.15 : 0) + (linkable ? 0.15 : 0)) * (matchesFilter ? 1 : 0.4)}
                 transparent
-                opacity={0.7 + 0.3 * age}
+                opacity={(0.85 - hush * 0.25 + 0.15 * age) * (matchesFilter ? 1 : 0.45)}
               />
             </mesh>
           </Float>
@@ -386,11 +416,11 @@ const SelectionHalo = ({ node, hush }: { node?: NodeRecord; hush: number }) => {
     <group ref={ref}>
       <mesh>
         <ringGeometry args={[0.36, 0.6, 48]} />
-        <meshBasicMaterial color="#4ad3e8" transparent opacity={0.35 * (0.6 + hush * 0.4)} />
+        <meshBasicMaterial color="#4ad3e8" transparent opacity={0.52 - hush * 0.22} />
       </mesh>
       <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
         <ringGeometry args={[0.3, 0.5, 48]} />
-        <meshBasicMaterial color="#7af6ff" transparent opacity={0.25 * (0.6 + hush * 0.4)} />
+        <meshBasicMaterial color="#7af6ff" transparent opacity={0.4 - hush * 0.18} />
       </mesh>
     </group>
   );
@@ -400,12 +430,16 @@ const Edges = ({
   nodes,
   edges,
   visibleSet,
-  hush
+  hush,
+  tagFilteredSet,
+  selectedNodeId
 }: {
   nodes: NodeRecord[];
   edges: { id: string; from: string; to: string }[];
   visibleSet: Set<string>;
   hush: number;
+  tagFilteredSet: Set<string>;
+  selectedNodeId?: string;
 }) => {
   const lookup = useMemo(() => Object.fromEntries(nodes.map((n) => [n.id, n])), [nodes]);
   return (
@@ -416,6 +450,11 @@ const Edges = ({
           const from = lookup[edge.from];
           const to = lookup[edge.to];
           if (!from || !to) return null;
+          const passesTagFilter = tagFilteredSet.has(from.id) || tagFilteredSet.has(to.id);
+          if (!passesTagFilter) return null;
+          const dimmed = !tagFilteredSet.has(from.id) || !tagFilteredSet.has(to.id);
+          const focused = selectedNodeId && (edge.from === selectedNodeId || edge.to === selectedNodeId);
+          const hushFade = 0.7 - hush * 0.35 + (focused ? 0.15 : 0);
           return (
             <Line
               key={edge.id}
@@ -423,10 +462,10 @@ const Edges = ({
                 [from.position.x, from.position.y, from.position.z],
                 [to.position.x, to.position.y, to.position.z]
               ]}
-              color="#5d6a90"
+              color={focused ? '#7fc9ff' : dimmed ? '#2f364f' : '#4c597a'}
               linewidth={1}
               transparent
-              opacity={0.3 + hush * 0.4}
+              opacity={hushFade * (dimmed && !focused ? 0.55 : 1)}
             />
           );
         })}
@@ -434,7 +473,21 @@ const Edges = ({
   );
 };
 
-const Toolbelt = ({ hush }: { hush: number }) => {
+const Toolbelt = ({
+  hush,
+  onOpenSearch,
+  availableTags,
+  activeTags,
+  onToggleTag,
+  onClearTags
+}: {
+  hush: number;
+  onOpenSearch: () => void;
+  availableTags: string[];
+  activeTags: string[];
+  onToggleTag: (tag: string) => void;
+  onClearTags: () => void;
+}) => {
   const { view, updateView, resetView, setAppMode, nodes } = useMiCa();
   const group = useRef<THREE.Group>(null);
   const { camera } = useThree();
@@ -457,56 +510,95 @@ const Toolbelt = ({ hush }: { hush: number }) => {
         position={[0, 0, 0]}
         className="pointer-events-auto"
       >
-        <div className="flex gap-2 rounded-full border border-white/10 bg-black/50 px-3 py-2 text-xs text-sand shadow-lg backdrop-blur"
-          style={{ opacity: 0.6 + hush * 0.4 }}
+        <div
+          className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-black/50 px-3 py-2 text-xs text-sand shadow-lg backdrop-blur"
+          style={{
+            opacity: 0.95 - hush * 0.35,
+            filter: `saturate(${1 - hush * 0.1}) contrast(${1 - hush * 0.2})`
+          }}
         >
-          <button
-            className={`rounded-full px-3 py-1 ${view.environment === 'dome' ? 'bg-aurora/20 text-aurora' : 'bg-white/10'}`}
-            onClick={() => updateView({ environment: 'dome' })}
-          >
-            Dome
-          </button>
-          <button
-            className={`rounded-full px-3 py-1 ${view.environment === 'white-room' ? 'bg-aurora/20 text-aurora' : 'bg-white/10'}`}
-            onClick={() => updateView({ environment: 'white-room' })}
-          >
-            White Room
-          </button>
-          {(['neighborhood', 'two-hop', 'all'] as const).map((mode) => {
-            const label = mode === 'all' && nodes.length > 30 ? 'all (heavy)' : mode;
-            return (
+          <div className="flex flex-wrap gap-2">
+            <button
+              className={`rounded-full px-3 py-1 ${view.environment === 'dome' ? 'bg-aurora/20 text-aurora' : 'bg-white/10'}`}
+              onClick={() => updateView({ environment: 'dome' })}
+            >
+              Dome
+            </button>
+            <button
+              className={`rounded-full px-3 py-1 ${
+                view.environment === 'white-room' ? 'bg-aurora/20 text-aurora' : 'bg-white/10'
+              }`}
+              onClick={() => updateView({ environment: 'white-room' })}
+            >
+              White Room
+            </button>
+            {(['neighborhood', 'two-hop', 'all'] as const).map((mode) => {
+              const label = mode === 'all' && nodes.length > 30 ? 'all (heavy)' : mode;
+              return (
+                <button
+                  key={mode}
+                  className={`rounded-full px-3 py-1 capitalize ${
+                    view.edgeVisibility === mode ? 'bg-white/15 text-sand' : 'bg-white/5 text-slate-300'
+                  }`}
+                  title={mode === 'all' ? 'May be cluttered on large graphs' : undefined}
+                  onClick={() => updateView({ edgeVisibility: mode })}
+                >
+                  {label}
+                </button>
+              );
+            })}
+            {view.edgeVisibility === 'all' && nodes.length > 30 ? (
+              <span className="rounded-full bg-amber-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-amber-200">
+                Dense view
+              </span>
+            ) : null}
+            <button className="rounded-full bg-white/5 px-3 py-1" onClick={() => resetView()}>
+              Reset
+            </button>
+            <button
+              className={`rounded-full px-3 py-1 ${
+                view.mode === 'observe' ? 'bg-aurora/20 text-aurora' : 'bg-amber-300/20 text-amber-200'
+              }`}
+              onClick={() => updateView({ mode: view.mode === 'observe' ? 'edit' : 'observe' })}
+            >
+              {view.mode === 'observe' ? 'Observe / Hush' : 'Edit'}
+            </button>
+            <button className="rounded-full bg-white/5 px-3 py-1" onClick={() => setAppMode('HOME_3D')}>
+              Home
+            </button>
+            <button
+              className="rounded-full bg-aurora/20 px-3 py-1 text-aurora hover:bg-aurora/30"
+              onClick={onOpenSearch}
+            >
+              Search /
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 rounded-xl bg-white/5 px-3 py-2">
+            <span className="text-[10px] uppercase tracking-[0.2em] text-slate-300">Tags</span>
+            {availableTags.length === 0 && <span className="text-slate-400">No tags yet</span>}
+            {availableTags.map((tag) => {
+              const active = activeTags.includes(tag);
+              return (
+                <button
+                  key={tag}
+                  className={`rounded-full px-3 py-1 text-xs ${
+                    active ? 'bg-aurora/20 text-aurora' : 'bg-black/30 text-sand'
+                  }`}
+                  onClick={() => onToggleTag(tag)}
+                >
+                  #{tag}
+                </button>
+              );
+            })}
+            {activeTags.length > 0 ? (
               <button
-                key={mode}
-                className={`rounded-full px-3 py-1 capitalize ${
-                  view.edgeVisibility === mode ? 'bg-white/15 text-sand' : 'bg-white/5 text-slate-300'
-                }`}
-                title={mode === 'all' ? 'May be cluttered on large graphs' : undefined}
-                onClick={() => updateView({ edgeVisibility: mode })}
+                className="rounded-full bg-white/10 px-3 py-1 text-xs text-slate-200"
+                onClick={onClearTags}
               >
-                {label}
+                Clear
               </button>
-            );
-          })}
-          {view.edgeVisibility === 'all' && nodes.length > 30 ? (
-            <span className="rounded-full bg-amber-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-amber-200">
-              Dense view
-            </span>
-          ) : null}
-          <button
-            className="rounded-full bg-white/5 px-3 py-1"
-            onClick={() => resetView()}
-          >
-            Reset
-          </button>
-          <button
-            className={`rounded-full px-3 py-1 ${view.mode === 'observe' ? 'bg-aurora/20 text-aurora' : 'bg-amber-300/20 text-amber-200'}`}
-            onClick={() => updateView({ mode: view.mode === 'observe' ? 'edit' : 'observe' })}
-          >
-            {view.mode === 'observe' ? 'Observe / Hush' : 'Edit'}
-          </button>
-          <button className="rounded-full bg-white/5 px-3 py-1" onClick={() => setAppMode('HOME_3D')}>
-            Home
-          </button>
+            ) : null}
+          </div>
         </div>
       </Html>
     </group>
@@ -566,7 +658,7 @@ const BlockView = ({ block }: { block: ContentBlock }) => {
   if (block.type === 'image') {
     return (
       <div className="overflow-hidden rounded-xl border border-white/10">
-        <img src={block.url} alt={block.alt ?? ''} className="max-h-40 w-full object-cover" />
+        <ResilientImage src={block.url} alt={block.alt ?? ''} className="max-h-40 w-full object-cover" />
         {block.alt ? <p className="px-2 py-1 text-[10px] text-slate-300">{block.alt}</p> : null}
       </div>
     );
@@ -711,7 +803,10 @@ const NodeInspector = ({
       <Html transform occlude className="pointer-events-auto">
         <div
           className="w-80 space-y-3 rounded-2xl border border-white/10 bg-black/70 p-4 text-sand shadow-xl backdrop-blur"
-          style={{ opacity: 0.48 + hush * 0.52 }}
+          style={{
+            opacity: 0.96 - hush * 0.36,
+            filter: `contrast(${1 - hush * 0.18}) saturate(${1 - hush * 0.08})`
+          }}
         >
           <div className="flex items-start justify-between">
             <div>
@@ -925,8 +1020,13 @@ const NodeInspector = ({
   );
 };
 
-const CommandBar = ({ visible, onClose, hush }: { visible: boolean; onClose: () => void; hush: number }) => {
-  const { search, selectNode } = useMiCa();
+const CommandBar = ({
+  visible,
+  onClose,
+  hush,
+  onFocus
+}: { visible: boolean; onClose: () => void; hush: number; onFocus: (id: string) => void }) => {
+  const { search } = useMiCa();
   const [query, setQuery] = useState('');
   const results = useMemo(() => (visible ? search(query) : []), [visible, query, search]);
 
@@ -936,7 +1036,10 @@ const CommandBar = ({ visible, onClose, hush }: { visible: boolean; onClose: () 
     <Html center transform occlude position={[0, 1.5, -3]} className="pointer-events-auto">
       <div
         className="w-[420px] space-y-2 rounded-2xl border border-white/10 bg-black/60 p-4 text-sand shadow-2xl backdrop-blur"
-        style={{ opacity: 0.5 + hush * 0.5 }}
+        style={{
+          opacity: 0.92 - hush * 0.32,
+          filter: `saturate(${1 - hush * 0.1}) contrast(${1 - hush * 0.12})`
+        }}
       >
         <div className="flex items-center justify-between text-xs text-slate-300">
           <p>Command / Search</p>
@@ -957,7 +1060,7 @@ const CommandBar = ({ visible, onClose, hush }: { visible: boolean; onClose: () 
               key={result.id}
               className="w-full rounded-lg bg-white/5 px-3 py-2 text-left hover:bg-aurora/10"
               onClick={() => {
-                selectNode(result.id);
+                onFocus(result.id);
                 onClose();
               }}
             >
@@ -977,10 +1080,30 @@ const SpaceWorld = () => {
   const controls = useRef<any>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [linkingFromId, setLinkingFromId] = useState<string | undefined>(undefined);
+  const [activeTags, setActiveTags] = useState<string[]>([]);
   const { camera } = useThree();
 
   const nodeLookup = useMemo(() => Object.fromEntries(nodes.map((node) => [node.id, node])), [nodes]);
   const selectedNode = selectedNodeId ? nodeLookup[selectedNodeId] : undefined;
+
+  const availableTags = useMemo(() => {
+    const tags = new Set<string>();
+    nodes.forEach((node) => node.tags.forEach((tag) => tags.add(tag)));
+    return Array.from(tags).sort();
+  }, [nodes]);
+
+  const tagFilteredSet = useMemo(() => {
+    if (activeTags.length === 0) return new Set(nodes.map((node) => node.id));
+    return new Set(
+      nodes.filter((node) => node.tags.some((tag) => activeTags.includes(tag))).map((node) => node.id)
+    );
+  }, [activeTags, nodes]);
+
+  const toggleTag = useCallback((tag: string) => {
+    setActiveTags((prev) => (prev.includes(tag) ? prev.filter((entry) => entry !== tag) : [...prev, tag]));
+  }, []);
+
+  const clearTags = useCallback(() => setActiveTags([]), []);
 
   const focusNode = useCallback(
     (nodeId: string) => {
@@ -1084,6 +1207,7 @@ const SpaceWorld = () => {
   return (
     <group onPointerMissed={() => selectNode(undefined)}>
       <Env hush={hush} />
+      <HushFog hush={hush} />
       <OrbitControls ref={controls} enablePan={false} enableDamping dampingFactor={0.08} />
       <ambientLight intensity={0.8} />
       <pointLight position={[10, 12, 8]} intensity={1.2} />
@@ -1094,10 +1218,25 @@ const SpaceWorld = () => {
         onFocus={focusNode}
         hush={hush}
         linkingFromId={linkingFromId}
+        tagFilteredSet={tagFilteredSet}
       />
       <SelectionHalo node={selectedNode} hush={hush} />
-      <Edges nodes={nodes} edges={edges} visibleSet={visibleSet} hush={hush} />
-      <Toolbelt hush={hush} />
+      <Edges
+        nodes={nodes}
+        edges={edges}
+        visibleSet={visibleSet}
+        hush={hush}
+        tagFilteredSet={tagFilteredSet}
+        selectedNodeId={selectedNodeId}
+      />
+      <Toolbelt
+        hush={hush}
+        onOpenSearch={() => setSearchOpen(true)}
+        availableTags={availableTags}
+        activeTags={activeTags}
+        onToggleTag={toggleTag}
+        onClearTags={clearTags}
+      />
       <NodeInspector
         node={selectedNode}
         hush={hush}
@@ -1105,23 +1244,31 @@ const SpaceWorld = () => {
         onStartLink={(sourceId) => setLinkingFromId(sourceId)}
         onCancelLink={() => setLinkingFromId(undefined)}
       />
-      <CommandBar visible={searchOpen} onClose={() => setSearchOpen(false)} hush={hush} />
+      <CommandBar
+        visible={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        hush={hush}
+        onFocus={focusNode}
+      />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -3, 0]}>
         <circleGeometry args={[18, 64]} />
-        <meshBasicMaterial color="#0f1324" transparent opacity={0.5 + hush * 0.2} />
+        <meshBasicMaterial color="#0f1324" transparent opacity={0.62 - hush * 0.32} />
       </mesh>
-      {nodes.slice(0, 12).map((node) => (
+      {nodes.slice(0, 12).map((node) => {
+        const dimmed = !tagFilteredSet.has(node.id);
+        return (
         <Text
           key={node.id}
           position={[node.position.x, node.position.y + 0.4, node.position.z]}
           fontSize={0.26}
-          color={selectedNodeId === node.id ? '#4ad3e8' : '#dce3ff'}
+          color={selectedNodeId === node.id ? '#4ad3e8' : dimmed ? '#6e7286' : '#dce3ff'}
           anchorX="center"
           anchorY="middle"
         >
           {node.title}
         </Text>
-      ))}
+        );
+      })}
     </group>
   );
 };
@@ -1133,7 +1280,7 @@ const WorldRouter = () => {
 };
 
 export default function App() {
-  const { init, initialized } = useMiCa();
+  const { init, initialized, hush } = useMiCa();
 
   useEffect(() => {
     init();
@@ -1156,6 +1303,15 @@ export default function App() {
         <color attach="background" args={[0.02, 0.04, 0.09]} />
         <WorldRouter />
       </Canvas>
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            'radial-gradient(ellipse at center, rgba(5,8,20,0) 55%, rgba(5,8,20,0.45) 100%)',
+          opacity: 0.18 + hush * 0.42,
+          transition: 'opacity 200ms ease'
+        }}
+      />
       <div className="pointer-events-none absolute left-4 top-4 text-xs uppercase tracking-[0.3em] text-aurora">
         MiCa Immersive Home
       </div>

@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
 import { useMiCa } from '../state/store';
 import { type ContentBlock, type NodeRecord } from '../state/types';
+import { ResilientImage } from './ResilientImage';
 
 const isAllowedEmbed = (url: string): boolean => {
   const host = new URL(url).hostname.replace('www.', '');
@@ -48,7 +49,7 @@ const renderBlock = (block: ContentBlock) => {
     case 'image':
       return (
         <div className="rounded-lg border border-white/10 bg-white/5 p-2">
-          <img src={block.url} alt={block.alt ?? 'Node asset'} className="w-full rounded" />
+          <ResilientImage src={block.url} alt={block.alt ?? 'Node asset'} className="w-full rounded" />
           <p className="text-xs text-slate-400 break-all">{block.url}</p>
         </div>
       );
