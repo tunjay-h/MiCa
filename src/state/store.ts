@@ -14,6 +14,7 @@ import {
 
 interface MiCaState {
   initialized: boolean;
+  appState: 'home' | 'space';
   spaces: SpaceRecord[];
   nodes: NodeRecord[];
   edges: EdgeRecord[];
@@ -21,9 +22,12 @@ interface MiCaState {
   selectedNodeId?: string;
   searchQuery: string;
   view: ViewState;
+  hush: number;
+  hushTarget: number;
   init: () => Promise<void>;
   setActiveSpace: (spaceId: string) => Promise<void>;
-  addSpaceFromTemplate: (templateName: string) => Promise<void>;
+  setAppState: (state: 'home' | 'space') => void;
+  addSpaceFromTemplate: (templateName: string, overrides?: Partial<SpaceRecord>) => Promise<string | undefined>;
   renameSpace: (spaceId: string, name: string) => Promise<void>;
   deleteSpace: (spaceId: string) => Promise<void>;
   createNode: (payload: { parentId?: string; title: string }) => Promise<NodeRecord | undefined>;
@@ -32,6 +36,7 @@ interface MiCaState {
   linkNodes: (fromId: string, toId: string, relation?: string) => Promise<void>;
   updateView: (view: Partial<ViewState>) => Promise<void>;
   selectNode: (nodeId?: string) => void;
+  stepHush: (delta: number) => void;
   search: (query: string) => SearchResult[];
   exportAll: () => Promise<string>;
   exportSpace: (spaceId: string) => Promise<string>;
@@ -44,7 +49,8 @@ const defaultViewState: ViewState = {
     target: [0, 0, 0]
   },
   environment: 'dome',
-  edgeVisibility: 'neighborhood'
+  edgeVisibility: 'neighborhood',
+  mode: 'observe'
 };
 
 const isMarkdownBlock = (block: ContentBlock): block is MarkdownBlock =>
@@ -52,6 +58,7 @@ const isMarkdownBlock = (block: ContentBlock): block is MarkdownBlock =>
 
 export const useMiCa = create<MiCaState>((set, get) => ({
   initialized: false,
+  appState: 'home',
   spaces: [],
   nodes: [],
   edges: [],
@@ -59,6 +66,8 @@ export const useMiCa = create<MiCaState>((set, get) => ({
   selectedNodeId: undefined,
   searchQuery: '',
   view: defaultViewState,
+  hush: 1,
+  hushTarget: 1,
   init: async () => {
     const spaceCount = await db.spaces.count();
     if (spaceCount === 0) {
@@ -75,7 +84,10 @@ export const useMiCa = create<MiCaState>((set, get) => ({
       });
     }
     const spaces = await db.spaces.toArray();
-    const activeSpaceId = spaces[0]?.id;
+    const storedLastSpace = typeof localStorage !== 'undefined' ? localStorage.getItem('mica:lastSpaceId') : undefined;
+    const activeSpaceId = storedLastSpace && spaces.some((s) => s.id === storedLastSpace)
+      ? storedLastSpace
+      : spaces[0]?.id;
     const nodes = activeSpaceId ? await db.nodes.where({ spaceId: activeSpaceId }).toArray() : [];
     const edges = activeSpaceId ? await db.edges.where({ spaceId: activeSpaceId }).toArray() : [];
     const viewRecord = activeSpaceId ? await db.views.get(activeSpaceId) : undefined;
@@ -85,27 +97,41 @@ export const useMiCa = create<MiCaState>((set, get) => ({
       activeSpaceId,
       nodes,
       edges,
-      view: viewRecord ?? defaultViewState
+      view: viewRecord ?? defaultViewState,
+      appState: 'home'
     });
   },
   setActiveSpace: async (spaceId) => {
     const nodes = await db.nodes.where({ spaceId }).toArray();
     const edges = await db.edges.where({ spaceId }).toArray();
     const view = (await db.views.get(spaceId)) ?? defaultViewState;
-    set({ activeSpaceId: spaceId, nodes, edges, selectedNodeId: undefined, view });
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('mica:lastSpaceId', spaceId);
+    }
+    set({
+      activeSpaceId: spaceId,
+      nodes,
+      edges,
+      selectedNodeId: undefined,
+      view,
+      hushTarget: (view.mode ?? 'observe') === 'observe' ? 1 : 0
+    });
   },
-  addSpaceFromTemplate: async (templateName) => {
+  setAppState: (state) => set({ appState: state }),
+  addSpaceFromTemplate: async (templateName, overrides) => {
     const template = instantiateTemplate(templateName) ?? instantiateTemplate('Blank Space');
-    if (!template) return;
+    if (!template) return undefined;
+    const space = { ...template.space, ...overrides } as SpaceRecord;
     await db.transaction('rw', [db.spaces, db.nodes, db.edges, db.views], async () => {
-      await db.spaces.add(template.space);
-      await db.nodes.bulkAdd(template.nodes);
-      await db.edges.bulkAdd(template.edges);
-      await db.views.put({ ...template.space.view, spaceId: template.space.id });
+      await db.spaces.add(space);
+      await db.nodes.bulkAdd(template.nodes.map((node) => ({ ...node, spaceId: space.id })));
+      await db.edges.bulkAdd(template.edges.map((edge) => ({ ...edge, spaceId: space.id })));
+      await db.views.put({ ...(space.view ?? template.space.view), spaceId: space.id });
     });
     const spaces = await db.spaces.toArray();
     set({ spaces });
-    await get().setActiveSpace(template.space.id);
+    await get().setActiveSpace(space.id);
+    return space.id;
   },
   renameSpace: async (spaceId, name) => {
     await db.spaces.update(spaceId, { name, updatedAt: Date.now() });
@@ -206,12 +232,18 @@ export const useMiCa = create<MiCaState>((set, get) => ({
     const nextView: ViewState = {
       ...state.view,
       ...view,
-      camera: view.camera ?? state.view.camera
+      camera: view.camera ?? state.view.camera,
+      mode: view.mode ?? state.view.mode ?? 'observe'
     };
     await db.views.put({ ...nextView, spaceId: state.activeSpaceId });
-    set({ view: nextView });
+    set({ view: nextView, hushTarget: nextView.mode === 'observe' ? 1 : 0 });
   },
   selectNode: (nodeId) => set({ selectedNodeId: nodeId }),
+  stepHush: (delta) => {
+    const { hush, hushTarget } = get();
+    const next = hush + (hushTarget - hush) * Math.min(1, delta * 2.5);
+    set({ hush: next });
+  },
   search: (query) => {
     set({ searchQuery: query });
     const { nodes, activeSpaceId } = get();

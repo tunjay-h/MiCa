@@ -64,6 +64,7 @@ export interface ViewState {
   };
   environment: 'white-room' | 'dome';
   edgeVisibility: 'neighborhood' | 'two-hop' | 'all';
+  mode?: 'observe' | 'edit';
 }
 
 export interface SpaceRecord {
