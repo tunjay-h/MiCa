@@ -1,0 +1,9 @@
+node_modules
+npm-debug.log*
+dist
+*.local
+*.log
+.env
+*.tsbuildinfo
+.DS_Store
+.idea
