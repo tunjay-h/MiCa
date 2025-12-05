@@ -257,7 +257,7 @@ export const useMiCa = create<MiCaState>((set, get) => ({
     });
     const nodes = await db.nodes.where({ spaceId: state.activeSpaceId }).toArray();
     const edges = await db.edges.where({ spaceId: state.activeSpaceId }).toArray();
-    set({ nodes, edges, selectedNodeId: nodes[0]?.id });
+    set({ nodes, edges, selectedNodeId: undefined });
   },
   linkNodes: async (fromId, toId, relation) => {
     const state = get();
