@@ -288,7 +288,8 @@ const NodeInstances = ({
   onSelect,
   onFocus,
   hush,
-  linkingFromId
+  linkingFromId,
+  tagFilteredSet
 }: {
   nodes: NodeRecord[];
   selectedNodeId?: string;
@@ -296,6 +297,7 @@ const NodeInstances = ({
   onFocus: (id: string) => void;
   hush: number;
   linkingFromId?: string;
+  tagFilteredSet: Set<string>;
 }) => {
   const [spawnedAt, setSpawnedAt] = useState<Record<string, number>>({});
 
@@ -322,9 +324,10 @@ const NodeInstances = ({
       {nodes.map((node, index) => {
         const wobble = Math.sin((Date.now() * 0.001 + index) * 0.6) * 0.08 * (0.4 + hush * 0.6);
         const selected = selectedNodeId === node.id;
+        const matchesFilter = tagFilteredSet.has(node.id);
         const born = spawnedAt[node.id];
         const age = born ? Math.min((performance.now() - born) / 800, 1) : 1;
-        const growth = born ? 0.7 + 0.35 * Math.sin((age * Math.PI) / 2) : 1;
+        const growth = (born ? 0.7 + 0.35 * Math.sin((age * Math.PI) / 2) : 1) * (matchesFilter ? 1 : 0.85);
         const linkSource = linkingFromId === node.id;
         const linkable = linkingFromId && linkingFromId !== node.id;
         const baseScale = (selected ? 1.1 : 1) * growth;
@@ -355,11 +358,11 @@ const NodeInstances = ({
             >
               <sphereGeometry args={[0.25, 28, 28]} />
               <meshStandardMaterial
-                color={linkSource ? '#f5c97a' : selected ? '#c2ddff' : '#9fb4ff'}
-                emissive={linkable ? '#7af6ff' : '#4ad3e8'}
-                emissiveIntensity={0.45 + hush * 0.35 + (selected ? 0.2 : 0) + (linkable ? 0.2 : 0)}
+                color={linkSource ? '#f5c97a' : selected ? '#c2ddff' : matchesFilter ? '#9fb4ff' : '#566185'}
+                emissive={linkable ? '#7af6ff' : matchesFilter ? '#4ad3e8' : '#2c3350'}
+                emissiveIntensity={(0.45 + hush * 0.35 + (selected ? 0.2 : 0) + (linkable ? 0.2 : 0)) * (matchesFilter ? 1 : 0.4)}
                 transparent
-                opacity={0.7 + 0.3 * age}
+                opacity={(0.7 + 0.3 * age) * (matchesFilter ? 1 : 0.4)}
               />
             </mesh>
           </Float>
@@ -400,12 +403,14 @@ const Edges = ({
   nodes,
   edges,
   visibleSet,
-  hush
+  hush,
+  tagFilteredSet
 }: {
   nodes: NodeRecord[];
   edges: { id: string; from: string; to: string }[];
   visibleSet: Set<string>;
   hush: number;
+  tagFilteredSet: Set<string>;
 }) => {
   const lookup = useMemo(() => Object.fromEntries(nodes.map((n) => [n.id, n])), [nodes]);
   return (
@@ -416,6 +421,9 @@ const Edges = ({
           const from = lookup[edge.from];
           const to = lookup[edge.to];
           if (!from || !to) return null;
+          const passesTagFilter = tagFilteredSet.has(from.id) || tagFilteredSet.has(to.id);
+          if (!passesTagFilter) return null;
+          const dimmed = !tagFilteredSet.has(from.id) || !tagFilteredSet.has(to.id);
           return (
             <Line
               key={edge.id}
@@ -423,10 +431,10 @@ const Edges = ({
                 [from.position.x, from.position.y, from.position.z],
                 [to.position.x, to.position.y, to.position.z]
               ]}
-              color="#5d6a90"
+              color={dimmed ? '#3a425c' : '#5d6a90'}
               linewidth={1}
               transparent
-              opacity={0.3 + hush * 0.4}
+              opacity={(0.3 + hush * 0.4) * (dimmed ? 0.6 : 1)}
             />
           );
         })}
@@ -434,7 +442,21 @@ const Edges = ({
   );
 };
 
-const Toolbelt = ({ hush }: { hush: number }) => {
+const Toolbelt = ({
+  hush,
+  onOpenSearch,
+  availableTags,
+  activeTags,
+  onToggleTag,
+  onClearTags
+}: {
+  hush: number;
+  onOpenSearch: () => void;
+  availableTags: string[];
+  activeTags: string[];
+  onToggleTag: (tag: string) => void;
+  onClearTags: () => void;
+}) => {
   const { view, updateView, resetView, setAppMode, nodes } = useMiCa();
   const group = useRef<THREE.Group>(null);
   const { camera } = useThree();
@@ -457,56 +479,92 @@ const Toolbelt = ({ hush }: { hush: number }) => {
         position={[0, 0, 0]}
         className="pointer-events-auto"
       >
-        <div className="flex gap-2 rounded-full border border-white/10 bg-black/50 px-3 py-2 text-xs text-sand shadow-lg backdrop-blur"
+        <div
+          className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-black/50 px-3 py-2 text-xs text-sand shadow-lg backdrop-blur"
           style={{ opacity: 0.6 + hush * 0.4 }}
         >
-          <button
-            className={`rounded-full px-3 py-1 ${view.environment === 'dome' ? 'bg-aurora/20 text-aurora' : 'bg-white/10'}`}
-            onClick={() => updateView({ environment: 'dome' })}
-          >
-            Dome
-          </button>
-          <button
-            className={`rounded-full px-3 py-1 ${view.environment === 'white-room' ? 'bg-aurora/20 text-aurora' : 'bg-white/10'}`}
-            onClick={() => updateView({ environment: 'white-room' })}
-          >
-            White Room
-          </button>
-          {(['neighborhood', 'two-hop', 'all'] as const).map((mode) => {
-            const label = mode === 'all' && nodes.length > 30 ? 'all (heavy)' : mode;
-            return (
+          <div className="flex flex-wrap gap-2">
+            <button
+              className={`rounded-full px-3 py-1 ${view.environment === 'dome' ? 'bg-aurora/20 text-aurora' : 'bg-white/10'}`}
+              onClick={() => updateView({ environment: 'dome' })}
+            >
+              Dome
+            </button>
+            <button
+              className={`rounded-full px-3 py-1 ${
+                view.environment === 'white-room' ? 'bg-aurora/20 text-aurora' : 'bg-white/10'
+              }`}
+              onClick={() => updateView({ environment: 'white-room' })}
+            >
+              White Room
+            </button>
+            {(['neighborhood', 'two-hop', 'all'] as const).map((mode) => {
+              const label = mode === 'all' && nodes.length > 30 ? 'all (heavy)' : mode;
+              return (
+                <button
+                  key={mode}
+                  className={`rounded-full px-3 py-1 capitalize ${
+                    view.edgeVisibility === mode ? 'bg-white/15 text-sand' : 'bg-white/5 text-slate-300'
+                  }`}
+                  title={mode === 'all' ? 'May be cluttered on large graphs' : undefined}
+                  onClick={() => updateView({ edgeVisibility: mode })}
+                >
+                  {label}
+                </button>
+              );
+            })}
+            {view.edgeVisibility === 'all' && nodes.length > 30 ? (
+              <span className="rounded-full bg-amber-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-amber-200">
+                Dense view
+              </span>
+            ) : null}
+            <button className="rounded-full bg-white/5 px-3 py-1" onClick={() => resetView()}>
+              Reset
+            </button>
+            <button
+              className={`rounded-full px-3 py-1 ${
+                view.mode === 'observe' ? 'bg-aurora/20 text-aurora' : 'bg-amber-300/20 text-amber-200'
+              }`}
+              onClick={() => updateView({ mode: view.mode === 'observe' ? 'edit' : 'observe' })}
+            >
+              {view.mode === 'observe' ? 'Observe / Hush' : 'Edit'}
+            </button>
+            <button className="rounded-full bg-white/5 px-3 py-1" onClick={() => setAppMode('HOME_3D')}>
+              Home
+            </button>
+            <button
+              className="rounded-full bg-aurora/20 px-3 py-1 text-aurora hover:bg-aurora/30"
+              onClick={onOpenSearch}
+            >
+              Search /
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 rounded-xl bg-white/5 px-3 py-2">
+            <span className="text-[10px] uppercase tracking-[0.2em] text-slate-300">Tags</span>
+            {availableTags.length === 0 && <span className="text-slate-400">No tags yet</span>}
+            {availableTags.map((tag) => {
+              const active = activeTags.includes(tag);
+              return (
+                <button
+                  key={tag}
+                  className={`rounded-full px-3 py-1 text-xs ${
+                    active ? 'bg-aurora/20 text-aurora' : 'bg-black/30 text-sand'
+                  }`}
+                  onClick={() => onToggleTag(tag)}
+                >
+                  #{tag}
+                </button>
+              );
+            })}
+            {activeTags.length > 0 ? (
               <button
-                key={mode}
-                className={`rounded-full px-3 py-1 capitalize ${
-                  view.edgeVisibility === mode ? 'bg-white/15 text-sand' : 'bg-white/5 text-slate-300'
-                }`}
-                title={mode === 'all' ? 'May be cluttered on large graphs' : undefined}
-                onClick={() => updateView({ edgeVisibility: mode })}
+                className="rounded-full bg-white/10 px-3 py-1 text-xs text-slate-200"
+                onClick={onClearTags}
               >
-                {label}
+                Clear
               </button>
-            );
-          })}
-          {view.edgeVisibility === 'all' && nodes.length > 30 ? (
-            <span className="rounded-full bg-amber-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-amber-200">
-              Dense view
-            </span>
-          ) : null}
-          <button
-            className="rounded-full bg-white/5 px-3 py-1"
-            onClick={() => resetView()}
-          >
-            Reset
-          </button>
-          <button
-            className={`rounded-full px-3 py-1 ${view.mode === 'observe' ? 'bg-aurora/20 text-aurora' : 'bg-amber-300/20 text-amber-200'}`}
-            onClick={() => updateView({ mode: view.mode === 'observe' ? 'edit' : 'observe' })}
-          >
-            {view.mode === 'observe' ? 'Observe / Hush' : 'Edit'}
-          </button>
-          <button className="rounded-full bg-white/5 px-3 py-1" onClick={() => setAppMode('HOME_3D')}>
-            Home
-          </button>
+            ) : null}
+          </div>
         </div>
       </Html>
     </group>
@@ -925,8 +983,13 @@ const NodeInspector = ({
   );
 };
 
-const CommandBar = ({ visible, onClose, hush }: { visible: boolean; onClose: () => void; hush: number }) => {
-  const { search, selectNode } = useMiCa();
+const CommandBar = ({
+  visible,
+  onClose,
+  hush,
+  onFocus
+}: { visible: boolean; onClose: () => void; hush: number; onFocus: (id: string) => void }) => {
+  const { search } = useMiCa();
   const [query, setQuery] = useState('');
   const results = useMemo(() => (visible ? search(query) : []), [visible, query, search]);
 
@@ -957,7 +1020,7 @@ const CommandBar = ({ visible, onClose, hush }: { visible: boolean; onClose: () 
               key={result.id}
               className="w-full rounded-lg bg-white/5 px-3 py-2 text-left hover:bg-aurora/10"
               onClick={() => {
-                selectNode(result.id);
+                onFocus(result.id);
                 onClose();
               }}
             >
@@ -977,10 +1040,30 @@ const SpaceWorld = () => {
   const controls = useRef<any>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [linkingFromId, setLinkingFromId] = useState<string | undefined>(undefined);
+  const [activeTags, setActiveTags] = useState<string[]>([]);
   const { camera } = useThree();
 
   const nodeLookup = useMemo(() => Object.fromEntries(nodes.map((node) => [node.id, node])), [nodes]);
   const selectedNode = selectedNodeId ? nodeLookup[selectedNodeId] : undefined;
+
+  const availableTags = useMemo(() => {
+    const tags = new Set<string>();
+    nodes.forEach((node) => node.tags.forEach((tag) => tags.add(tag)));
+    return Array.from(tags).sort();
+  }, [nodes]);
+
+  const tagFilteredSet = useMemo(() => {
+    if (activeTags.length === 0) return new Set(nodes.map((node) => node.id));
+    return new Set(
+      nodes.filter((node) => node.tags.some((tag) => activeTags.includes(tag))).map((node) => node.id)
+    );
+  }, [activeTags, nodes]);
+
+  const toggleTag = useCallback((tag: string) => {
+    setActiveTags((prev) => (prev.includes(tag) ? prev.filter((entry) => entry !== tag) : [...prev, tag]));
+  }, []);
+
+  const clearTags = useCallback(() => setActiveTags([]), []);
 
   const focusNode = useCallback(
     (nodeId: string) => {
@@ -1094,10 +1177,24 @@ const SpaceWorld = () => {
         onFocus={focusNode}
         hush={hush}
         linkingFromId={linkingFromId}
+        tagFilteredSet={tagFilteredSet}
       />
       <SelectionHalo node={selectedNode} hush={hush} />
-      <Edges nodes={nodes} edges={edges} visibleSet={visibleSet} hush={hush} />
-      <Toolbelt hush={hush} />
+      <Edges
+        nodes={nodes}
+        edges={edges}
+        visibleSet={visibleSet}
+        hush={hush}
+        tagFilteredSet={tagFilteredSet}
+      />
+      <Toolbelt
+        hush={hush}
+        onOpenSearch={() => setSearchOpen(true)}
+        availableTags={availableTags}
+        activeTags={activeTags}
+        onToggleTag={toggleTag}
+        onClearTags={clearTags}
+      />
       <NodeInspector
         node={selectedNode}
         hush={hush}
@@ -1105,23 +1202,31 @@ const SpaceWorld = () => {
         onStartLink={(sourceId) => setLinkingFromId(sourceId)}
         onCancelLink={() => setLinkingFromId(undefined)}
       />
-      <CommandBar visible={searchOpen} onClose={() => setSearchOpen(false)} hush={hush} />
+      <CommandBar
+        visible={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        hush={hush}
+        onFocus={focusNode}
+      />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -3, 0]}>
         <circleGeometry args={[18, 64]} />
         <meshBasicMaterial color="#0f1324" transparent opacity={0.5 + hush * 0.2} />
       </mesh>
-      {nodes.slice(0, 12).map((node) => (
+      {nodes.slice(0, 12).map((node) => {
+        const dimmed = !tagFilteredSet.has(node.id);
+        return (
         <Text
           key={node.id}
           position={[node.position.x, node.position.y + 0.4, node.position.z]}
           fontSize={0.26}
-          color={selectedNodeId === node.id ? '#4ad3e8' : '#dce3ff'}
+          color={selectedNodeId === node.id ? '#4ad3e8' : dimmed ? '#6e7286' : '#dce3ff'}
           anchorX="center"
           anchorY="middle"
         >
           {node.title}
         </Text>
-      ))}
+        );
+      })}
     </group>
   );
 };
