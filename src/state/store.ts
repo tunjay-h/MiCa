@@ -209,7 +209,7 @@ export const useMiCa = create<MiCaState>((set, get) => ({
     const basePosition = parentId
       ? state.nodes.find((node) => node.id === parentId)?.position ?? { x: 0, y: 0, z: 0 }
       : { x: 0, y: 0, z: 0 };
-    const offset = () => (Math.random() - 0.5) * 1.5;
+    const offset = () => (Math.random() - 0.5) * 0.9;
     const node: NodeRecord = {
       id: nanoid(),
       spaceId: state.activeSpaceId,
