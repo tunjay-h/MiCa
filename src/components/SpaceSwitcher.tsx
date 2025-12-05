@@ -1,9 +1,8 @@
+import { availableTemplates } from '../data/templates';
 import { useMiCa } from '../state/store';
 
-const templates = ['Blank Space', 'Research Brain', 'Life OS', 'Startup Map'];
-
 export function SpaceSwitcher() {
-  const { spaces, activeSpaceId, setActiveSpace, addSpaceFromTemplate } = useMiCa();
+  const { spaces, activeSpaceId, setActiveSpace, addSpaceFromTemplate, renameSpace, deleteSpace } = useMiCa();
 
   return (
     <div className="space-y-3">
@@ -34,6 +33,28 @@ export function SpaceSwitcher() {
             <div>
               <p className="font-semibold text-sand">{space.name}</p>
               <p className="text-xs text-slate-400">Updated {new Date(space.updatedAt).toLocaleDateString()}</p>
+              <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-slate-400">
+                <button
+                  className="rounded-full bg-white/5 px-2 py-1 hover:text-sand"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    const next = window.prompt('Rename space', space.name);
+                    if (next?.trim()) renameSpace(space.id, next.trim());
+                  }}
+                >
+                  Rename
+                </button>
+                <button
+                  className="rounded-full bg-red-500/10 px-2 py-1 text-red-200 hover:bg-red-500/20"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    const confirmed = window.confirm('Delete this Space and all its contents?');
+                    if (confirmed) deleteSpace(space.id);
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
             </div>
           </button>
         ))}
@@ -41,13 +62,13 @@ export function SpaceSwitcher() {
       <div className="rounded-lg border border-white/5 bg-white/5 p-3">
         <p className="text-xs text-slate-300 uppercase tracking-[0.2em] mb-2">Templates</p>
         <div className="flex flex-wrap gap-2">
-          {templates.map((template) => (
+          {availableTemplates.map((template) => (
             <button
-              key={template}
+              key={template.key}
               className="rounded-md border border-white/10 px-3 py-1 text-sm text-sand hover:border-aurora/40"
-              onClick={() => addSpaceFromTemplate(template)}
+              onClick={() => addSpaceFromTemplate(template.name)}
             >
-              {template}
+              {template.name}
             </button>
           ))}
         </div>

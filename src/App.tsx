@@ -4,6 +4,7 @@ import { SceneCanvas } from './scene/SceneCanvas';
 import { SpaceSwitcher } from './components/SpaceSwitcher';
 import { SearchBar } from './components/SearchBar';
 import { useMiCa } from './state/store';
+import { ImportExportPanel } from './components/ImportExportPanel';
 
 function Header() {
   return (
@@ -48,6 +49,7 @@ export default function App() {
           <SpaceSwitcher />
           <NodePanel />
         </div>
+        <ImportExportPanel />
         <footer className="rounded-xl border border-white/5 bg-white/5 px-4 py-3 text-xs text-slate-400">
           Local-only by default • IndexedDB powered • Offline-ready via PWA. Future-proofed for XR + AI helpers.
         </footer>
