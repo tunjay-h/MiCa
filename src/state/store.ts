@@ -3,7 +3,9 @@ import { db, currentSchemaVersion } from './database';
 import { buildTemplates, instantiateTemplate } from '../data/templates';
 import { nanoid } from '../utils/nanoid';
 import {
+  type ContentBlock,
   type EdgeRecord,
+  type MarkdownBlock,
   type NodeRecord,
   type SearchResult,
   type SpaceRecord,
@@ -44,6 +46,9 @@ const defaultViewState: ViewState = {
   environment: 'dome',
   edgeVisibility: 'neighborhood'
 };
+
+const isMarkdownBlock = (block: ContentBlock): block is MarkdownBlock =>
+  block.type === 'markdown';
 
 export const useMiCa = create<MiCaState>((set, get) => ({
   initialized: false,
@@ -213,18 +218,25 @@ export const useMiCa = create<MiCaState>((set, get) => ({
     if (!query.trim() || !activeSpaceId) return [];
     const lower = query.toLowerCase();
     return nodes
-      .filter(
-        (node) =>
-          node.title.toLowerCase().includes(lower) ||
-          node.blocks.some((block) => block.type === 'markdown' && block.text.toLowerCase().includes(lower))
-      )
+      .filter((node) => {
+        const matchesTitle = node.title.toLowerCase().includes(lower);
+        const matchesContent = node.blocks.some(
+          (block) => isMarkdownBlock(block) && block.text.toLowerCase().includes(lower)
+        );
+        return matchesTitle || matchesContent;
+      })
       .slice(0, 8)
-      .map((node) => ({
-        id: node.id,
-        title: node.title,
-        snippet: node.blocks.find((block) => block.type === 'markdown' && block.text.toLowerCase().includes(lower))?.
-          text.slice(0, 120) ?? node.title
-      }));
+      .map((node) => {
+        const matchingBlock = node.blocks.find(
+          (block): block is MarkdownBlock =>
+            isMarkdownBlock(block) && block.text.toLowerCase().includes(lower)
+        );
+        return {
+          id: node.id,
+          title: node.title,
+          snippet: matchingBlock?.text.slice(0, 120) ?? node.title
+        };
+      });
   },
   exportAll: async () => {
     const [spaces, nodes, edges, views] = await Promise.all([
