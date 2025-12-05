@@ -39,6 +39,7 @@ interface MiCaState {
   deleteNode: (nodeId: string) => Promise<void>;
   linkNodes: (fromId: string, toId: string, relation?: string) => Promise<void>;
   updateView: (view: Partial<ViewState>) => Promise<void>;
+  resetView: () => Promise<void>;
   selectNode: (nodeId?: string) => void;
   stepHush: (delta: number) => void;
   search: (query: string) => SearchResult[];
@@ -287,6 +288,17 @@ export const useMiCa = create<MiCaState>((set, get) => ({
     };
     await db.spaceViewState.put({ ...nextView, spaceId: state.activeSpaceId });
     set({ view: nextView, hushTarget: nextView.mode === 'observe' ? 1 : 0 });
+  },
+  resetView: async () => {
+    const state = get();
+    if (!state.activeSpaceId) return;
+    const fallbackView =
+      state.spaces.find((space) => space.id === state.activeSpaceId)?.view ?? defaultViewState;
+    await db.spaceViewState.put({ ...fallbackView, spaceId: state.activeSpaceId });
+    set({
+      view: fallbackView,
+      hushTarget: (fallbackView.mode ?? 'observe') === 'observe' ? 1 : 0
+    });
   },
   selectNode: (nodeId) => set({ selectedNodeId: nodeId }),
   stepHush: (delta) => {

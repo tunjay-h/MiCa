@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Float, GradientTexture, Html, Line, OrbitControls, Text } from '@react-three/drei';
 import * as THREE from 'three';
@@ -281,10 +281,12 @@ const HomeWorld = () => {
 const NodeInstances = ({
   nodes,
   onSelect,
+  onFocus,
   hush
 }: {
   nodes: NodeRecord[];
   onSelect: (id: string) => void;
+  onFocus: (id: string) => void;
   hush: number;
 }) => (
   <group>
@@ -296,6 +298,16 @@ const NodeInstances = ({
             onClick={(event) => {
               event.stopPropagation();
               onSelect(node.id);
+            }}
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+              onFocus(node.id);
+            }}
+            onPointerDown={(event) => {
+              if (event.detail === 2) {
+                event.stopPropagation();
+                onFocus(node.id);
+              }
             }}
           >
             <sphereGeometry args={[0.25, 28, 28]} />
@@ -346,7 +358,7 @@ const Edges = ({
 };
 
 const Toolbelt = ({ hush }: { hush: number }) => {
-  const { view, updateView, setAppMode } = useMiCa();
+  const { view, updateView, resetView, setAppMode } = useMiCa();
   const group = useRef<THREE.Group>(null);
   const { camera } = useThree();
 
@@ -396,7 +408,7 @@ const Toolbelt = ({ hush }: { hush: number }) => {
           ))}
           <button
             className="rounded-full bg-white/5 px-3 py-1"
-            onClick={() => updateView({ camera: { position: [8, 6, 10], target: [0, 0, 0] } })}
+            onClick={() => resetView()}
           >
             Reset
           </button>
@@ -534,6 +546,33 @@ const SpaceWorld = () => {
   const nodeLookup = useMemo(() => Object.fromEntries(nodes.map((node) => [node.id, node])), [nodes]);
   const selectedNode = selectedNodeId ? nodeLookup[selectedNodeId] : undefined;
 
+  const focusNode = useCallback(
+    (nodeId: string) => {
+      const node = nodeLookup[nodeId];
+      if (!node) return;
+      selectNode(nodeId);
+      const target = new THREE.Vector3(node.position.x, node.position.y, node.position.z);
+      const currentTarget = controls.current?.target ?? new THREE.Vector3(...view.camera.target);
+      const direction = camera.position.clone().sub(currentTarget);
+      const distance = Math.max(direction.length(), 4);
+      const newPosition = target.clone().add(direction.normalize().multiplyScalar(distance));
+
+      camera.position.copy(newPosition);
+      if (controls.current) {
+        controls.current.target.copy(target);
+        controls.current.update();
+      }
+
+      updateView({
+        camera: {
+          position: [newPosition.x, newPosition.y, newPosition.z],
+          target: [target.x, target.y, target.z]
+        }
+      });
+    },
+    [camera, nodeLookup, selectNode, updateView, view.camera.target]
+  );
+
   const visibleSet = useMemo(() => {
     if (view.edgeVisibility === 'all') return new Set(nodes.map((node) => node.id));
     const focus = selectedNodeId ?? nodes[0]?.id;
@@ -594,10 +633,10 @@ const SpaceWorld = () => {
   return (
     <group>
       <Env hush={hush} />
-      <OrbitControls ref={controls} enablePan={false} />
+      <OrbitControls ref={controls} enablePan={false} enableDamping dampingFactor={0.08} />
       <ambientLight intensity={0.8} />
       <pointLight position={[10, 12, 8]} intensity={1.2} />
-      <NodeInstances nodes={nodes} onSelect={selectNode} hush={hush} />
+      <NodeInstances nodes={nodes} onSelect={selectNode} onFocus={focusNode} hush={hush} />
       <Edges nodes={nodes} edges={edges} visibleSet={visibleSet} hush={hush} />
       <Toolbelt hush={hush} />
       <NodeInspector node={selectedNode} hush={hush} />
