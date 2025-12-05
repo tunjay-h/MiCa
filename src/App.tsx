@@ -8,6 +8,7 @@ import rehypeSanitize from 'rehype-sanitize';
 import { nanoid } from './utils/nanoid';
 import { useMiCa } from './state/store';
 import { type ContentBlock, type NodeRecord } from './state/types';
+import { ResilientImage } from './components/ResilientImage';
 import './index.css';
 
 const DomeEnvironment = ({ hush }: { hush: number }) => (
@@ -657,7 +658,7 @@ const BlockView = ({ block }: { block: ContentBlock }) => {
   if (block.type === 'image') {
     return (
       <div className="overflow-hidden rounded-xl border border-white/10">
-        <img src={block.url} alt={block.alt ?? ''} className="max-h-40 w-full object-cover" />
+        <ResilientImage src={block.url} alt={block.alt ?? ''} className="max-h-40 w-full object-cover" />
         {block.alt ? <p className="px-2 py-1 text-[10px] text-slate-300">{block.alt}</p> : null}
       </div>
     );
