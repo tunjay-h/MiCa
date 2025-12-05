@@ -86,7 +86,7 @@ const NodeMeta = ({ node }: { node: NodeRecord }) => (
 );
 
 export function NodePanel() {
-  const { nodes, selectedNodeId } = useMiCa();
+  const { nodes, selectedNodeId, createNode, deleteNode, selectNode } = useMiCa();
   const node = nodes.find((entry) => entry.id === selectedNodeId) ?? nodes[0];
 
   if (!node) {
@@ -109,6 +109,26 @@ export function NodePanel() {
         </span>
       </div>
       <div className="mt-4 space-y-3">
+        <div className="flex flex-wrap gap-2 text-sm">
+          <button
+            className="rounded-lg border border-aurora/40 px-3 py-2 text-aurora hover:border-aurora/60"
+            onClick={() => createNode({ parentId: node.id, title: `${node.title} child` })}
+          >
+            + Add child
+          </button>
+          <button
+            className="rounded-lg border border-white/10 px-3 py-2 text-sand hover:border-red-500/50 hover:text-red-200"
+            onClick={() => deleteNode(node.id)}
+          >
+            Delete
+          </button>
+          <button
+            className="rounded-lg border border-white/10 px-3 py-2 text-sand hover:border-aurora/60"
+            onClick={() => selectNode(undefined)}
+          >
+            Clear selection
+          </button>
+        </div>
         <NodeMeta node={node} />
         <div className="h-px w-full bg-white/10" />
         <div className="space-y-6">

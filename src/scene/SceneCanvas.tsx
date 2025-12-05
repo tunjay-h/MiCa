@@ -1,10 +1,18 @@
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Instances, Instance, OrbitControls, Text, Line, GradientTexture } from '@react-three/drei';
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useMiCa } from '../state/store';
 import { type EdgeRecord, type NodeRecord } from '../state/types';
 
-const NodeInstances = ({ nodes, onSelect }: { nodes: NodeRecord[]; onSelect: (id: string) => void }) => (
+const NodeInstances = ({
+  nodes,
+  onSelect,
+  onFocus
+}: {
+  nodes: NodeRecord[];
+  onSelect: (id: string) => void;
+  onFocus: (id: string) => void;
+}) => (
   <Instances limit={nodes.length} castShadow receiveShadow>
     <sphereGeometry args={[0.22, 24, 24]} />
     <meshStandardMaterial emissive="#4ad3e8" color="#9fb4ff" emissiveIntensity={0.6} />
@@ -15,6 +23,10 @@ const NodeInstances = ({ nodes, onSelect }: { nodes: NodeRecord[]; onSelect: (id
         onClick={(event) => {
           event.stopPropagation();
           onSelect(node.id);
+        }}
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+          onFocus(node.id);
         }}
       />
     ))}
@@ -55,13 +67,24 @@ const EdgeLines = ({
   </group>
 );
 
-const FloatingEnvironment = () => (
-  <mesh scale={[80, 40, 80]} position={[0, 0, 0]}>
-    <sphereGeometry args={[1, 32, 32]} />
-    <meshBasicMaterial side={1}>
-      <GradientTexture stops={[0, 0.5, 1]} colors={['#0b1224', '#0f1f3c', '#0b1224']} size={256} />
-    </meshBasicMaterial>
-  </mesh>
+const FloatingEnvironment = ({ mode }: { mode: 'white-room' | 'dome' }) => (
+  <>
+    {mode === 'dome' ? (
+      <mesh scale={[80, 40, 80]} position={[0, 0, 0]}>
+        <sphereGeometry args={[1, 32, 32]} />
+        <meshBasicMaterial side={1}>
+          <GradientTexture stops={[0, 0.5, 1]} colors={['#0b1224', '#0f1f3c', '#0b1224']} size={256} />
+        </meshBasicMaterial>
+      </mesh>
+    ) : (
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -4, 0]}>
+        <planeGeometry args={[120, 120]} />
+        <meshBasicMaterial>
+          <GradientTexture stops={[0, 1]} colors={['#0f1324', '#0b1224']} size={256} />
+        </meshBasicMaterial>
+      </mesh>
+    )}
+  </>
 );
 
 const SceneContent = () => {
@@ -71,6 +94,19 @@ const SceneContent = () => {
     [nodes]
   );
   const elapsed = useRef(0);
+  const controls = useRef<any>(null);
+
+  const focusNode = (id: string) => {
+    const target = nodeLookup[id];
+    if (!target) return;
+    selectNode(id);
+    updateView({
+      camera: {
+        position: [target.position.x + 4, target.position.y + 3, target.position.z + 4],
+        target: [target.position.x, target.position.y, target.position.z]
+      }
+    });
+  };
 
   const visibleSet = useMemo(() => {
     if (view.edgeVisibility === 'all') {
@@ -98,6 +134,13 @@ const SceneContent = () => {
     return neighborhood;
   }, [edges, nodes, selectedNodeId, view.edgeVisibility]);
 
+  useEffect(() => {
+    if (controls.current) {
+      controls.current.target.set(view.camera.target[0], view.camera.target[1], view.camera.target[2]);
+      controls.current.update();
+    }
+  }, [view.camera.target]);
+
   useFrame(({ camera }, delta) => {
     elapsed.current += delta;
     if (elapsed.current > 0.4) {
@@ -113,10 +156,11 @@ const SceneContent = () => {
 
   return (
     <>
+      <OrbitControls ref={controls} enablePan={false} />
       <ambientLight intensity={0.6} />
       <pointLight position={[10, 15, 12]} intensity={1.1} />
-      <FloatingEnvironment />
-      <NodeInstances nodes={nodes} onSelect={selectNode} />
+      <FloatingEnvironment mode={view.environment} />
+      <NodeInstances nodes={nodes} onSelect={selectNode} onFocus={focusNode} />
       <EdgeLines edges={edges} nodeLookup={nodeLookup} visibleSet={visibleSet} />
       {nodes.slice(0, 12).map((node) => (
         <Text
@@ -139,13 +183,61 @@ const SceneContent = () => {
 };
 
 export function SceneCanvas() {
+  const { view, updateView } = useMiCa();
+
+  const resetView = () => {
+    updateView({ camera: { position: [8, 6, 10], target: [0, 0, 0] } });
+  };
+
   return (
-    <div className="h-[520px] w-full overflow-hidden rounded-2xl border border-white/5 bg-black/40 shadow-inner">
-      <Canvas camera={{ position: [8, 6, 10], fov: 45 }} gl={{ antialias: true }}>
-        <color attach="background" args={[0.03, 0.05, 0.1]} />
-        <OrbitControls enablePan={false} />
-        <SceneContent />
-      </Canvas>
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/5 bg-white/5 px-4 py-3 text-sm text-sand">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs uppercase tracking-[0.3em] text-slate-400">Scene</span>
+          <button
+            className={`rounded-full px-3 py-1 ${
+              view.environment === 'dome' ? 'bg-aurora/20 text-aurora' : 'bg-white/10 text-sand'
+            }`}
+            onClick={() => updateView({ environment: 'dome' })}
+          >
+            Dome
+          </button>
+          <button
+            className={`rounded-full px-3 py-1 ${
+              view.environment === 'white-room' ? 'bg-aurora/20 text-aurora' : 'bg-white/10 text-sand'
+            }`}
+            onClick={() => updateView({ environment: 'white-room' })}
+          >
+            White Room
+          </button>
+          <div className="ml-3 flex items-center gap-2">
+            <span className="text-xs text-slate-400">Edges</span>
+            {(['neighborhood', 'two-hop', 'all'] as const).map((mode) => (
+              <button
+                key={mode}
+                className={`rounded-full px-3 py-1 capitalize ${
+                  view.edgeVisibility === mode ? 'bg-aurora/20 text-aurora' : 'bg-white/10 text-sand'
+                }`}
+                onClick={() => updateView({ edgeVisibility: mode })}
+              >
+                {mode}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button className="rounded-full border border-white/10 px-3 py-1 hover:border-aurora/60" onClick={resetView}>
+            Reset view
+          </button>
+        </div>
+      </div>
+      <div className="h-[520px] w-full overflow-hidden rounded-2xl border border-white/5 bg-black/40 shadow-inner">
+        <Canvas camera={{ position: [8, 6, 10], fov: 45 }} gl={{ antialias: true }}>
+          <color attach="background" args={[0.03, 0.05, 0.1]} />
+          <OrbitControls ref={(controls: any) => (controls ? ((controls as any).enablePan = false) : null)} />
+          <SceneContent />
+        </Canvas>
+      </div>
     </div>
   );
 }
