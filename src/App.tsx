@@ -13,7 +13,7 @@ import './index.css';
 const DomeEnvironment = ({ hush }: { hush: number }) => (
   <mesh scale={[90, 60, 90]}>
     <sphereGeometry args={[1, 64, 64]} />
-    <meshBasicMaterial side={1} transparent opacity={0.9 + (1 - hush) * 0.05}>
+    <meshBasicMaterial side={1} transparent opacity={0.9 - hush * 0.08}>
       <GradientTexture stops={[0, 0.5, 1]} colors={['#0b1224', '#0e1a33', '#0b1224']} size={512} />
     </meshBasicMaterial>
   </mesh>
@@ -22,11 +22,36 @@ const DomeEnvironment = ({ hush }: { hush: number }) => (
 const WhiteRoomEnvironment = ({ hush }: { hush: number }) => (
   <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -5, 0]}>
     <planeGeometry args={[160, 160]} />
-    <meshBasicMaterial transparent opacity={0.7 + (1 - hush) * 0.1}>
+    <meshBasicMaterial transparent opacity={0.74 - hush * 0.12}>
       <GradientTexture stops={[0, 1]} colors={['#0d1021', '#0a0c18']} size={256} />
     </meshBasicMaterial>
   </mesh>
 );
+
+const HushFog = ({ hush }: { hush: number }) => {
+  const { scene } = useThree();
+  const fogRef = useRef<THREE.Fog | null>(null);
+
+  useEffect(() => {
+    const fog = fogRef.current ?? new THREE.Fog('#0a1024', 12, 52);
+    fogRef.current = fog;
+    const previousFog = scene.fog;
+    scene.fog = fog;
+    return () => {
+      scene.fog = previousFog;
+    };
+  }, [scene]);
+
+  useEffect(() => {
+    const fog = fogRef.current;
+    if (!fog) return;
+    fog.color.set('#0a1024');
+    fog.near = 12 + hush * 3.5;
+    fog.far = Math.max(fog.near + 12, 52 - hush * 12);
+  }, [hush]);
+
+  return null;
+};
 
 const SpaceCard = ({
   index,
@@ -322,7 +347,8 @@ const NodeInstances = ({
   return (
     <group>
       {nodes.map((node, index) => {
-        const wobble = Math.sin((Date.now() * 0.001 + index) * 0.6) * 0.08 * (0.4 + hush * 0.6);
+        const wobble =
+          Math.sin((Date.now() * 0.001 + index) * 0.6) * (0.12 - hush * 0.06);
         const selected = selectedNodeId === node.id;
         const matchesFilter = tagFilteredSet.has(node.id);
         const born = spawnedAt[node.id];
@@ -360,9 +386,9 @@ const NodeInstances = ({
               <meshStandardMaterial
                 color={linkSource ? '#f5c97a' : selected ? '#c2ddff' : matchesFilter ? '#9fb4ff' : '#566185'}
                 emissive={linkable ? '#7af6ff' : matchesFilter ? '#4ad3e8' : '#2c3350'}
-                emissiveIntensity={(0.45 + hush * 0.35 + (selected ? 0.2 : 0) + (linkable ? 0.2 : 0)) * (matchesFilter ? 1 : 0.4)}
+                emissiveIntensity={(0.7 - hush * 0.25 + (selected ? 0.15 : 0) + (linkable ? 0.15 : 0)) * (matchesFilter ? 1 : 0.4)}
                 transparent
-                opacity={(0.7 + 0.3 * age) * (matchesFilter ? 1 : 0.4)}
+                opacity={(0.85 - hush * 0.25 + 0.15 * age) * (matchesFilter ? 1 : 0.45)}
               />
             </mesh>
           </Float>
@@ -389,11 +415,11 @@ const SelectionHalo = ({ node, hush }: { node?: NodeRecord; hush: number }) => {
     <group ref={ref}>
       <mesh>
         <ringGeometry args={[0.36, 0.6, 48]} />
-        <meshBasicMaterial color="#4ad3e8" transparent opacity={0.35 * (0.6 + hush * 0.4)} />
+        <meshBasicMaterial color="#4ad3e8" transparent opacity={0.52 - hush * 0.22} />
       </mesh>
       <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
         <ringGeometry args={[0.3, 0.5, 48]} />
-        <meshBasicMaterial color="#7af6ff" transparent opacity={0.25 * (0.6 + hush * 0.4)} />
+        <meshBasicMaterial color="#7af6ff" transparent opacity={0.4 - hush * 0.18} />
       </mesh>
     </group>
   );
@@ -404,13 +430,15 @@ const Edges = ({
   edges,
   visibleSet,
   hush,
-  tagFilteredSet
+  tagFilteredSet,
+  selectedNodeId
 }: {
   nodes: NodeRecord[];
   edges: { id: string; from: string; to: string }[];
   visibleSet: Set<string>;
   hush: number;
   tagFilteredSet: Set<string>;
+  selectedNodeId?: string;
 }) => {
   const lookup = useMemo(() => Object.fromEntries(nodes.map((n) => [n.id, n])), [nodes]);
   return (
@@ -424,6 +452,8 @@ const Edges = ({
           const passesTagFilter = tagFilteredSet.has(from.id) || tagFilteredSet.has(to.id);
           if (!passesTagFilter) return null;
           const dimmed = !tagFilteredSet.has(from.id) || !tagFilteredSet.has(to.id);
+          const focused = selectedNodeId && (edge.from === selectedNodeId || edge.to === selectedNodeId);
+          const hushFade = 0.7 - hush * 0.35 + (focused ? 0.15 : 0);
           return (
             <Line
               key={edge.id}
@@ -431,10 +461,10 @@ const Edges = ({
                 [from.position.x, from.position.y, from.position.z],
                 [to.position.x, to.position.y, to.position.z]
               ]}
-              color={dimmed ? '#3a425c' : '#5d6a90'}
+              color={focused ? '#7fc9ff' : dimmed ? '#2f364f' : '#4c597a'}
               linewidth={1}
               transparent
-              opacity={(0.3 + hush * 0.4) * (dimmed ? 0.6 : 1)}
+              opacity={hushFade * (dimmed && !focused ? 0.55 : 1)}
             />
           );
         })}
@@ -481,7 +511,10 @@ const Toolbelt = ({
       >
         <div
           className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-black/50 px-3 py-2 text-xs text-sand shadow-lg backdrop-blur"
-          style={{ opacity: 0.6 + hush * 0.4 }}
+          style={{
+            opacity: 0.95 - hush * 0.35,
+            filter: `saturate(${1 - hush * 0.1}) contrast(${1 - hush * 0.2})`
+          }}
         >
           <div className="flex flex-wrap gap-2">
             <button
@@ -769,7 +802,10 @@ const NodeInspector = ({
       <Html transform occlude className="pointer-events-auto">
         <div
           className="w-80 space-y-3 rounded-2xl border border-white/10 bg-black/70 p-4 text-sand shadow-xl backdrop-blur"
-          style={{ opacity: 0.48 + hush * 0.52 }}
+          style={{
+            opacity: 0.96 - hush * 0.36,
+            filter: `contrast(${1 - hush * 0.18}) saturate(${1 - hush * 0.08})`
+          }}
         >
           <div className="flex items-start justify-between">
             <div>
@@ -999,7 +1035,10 @@ const CommandBar = ({
     <Html center transform occlude position={[0, 1.5, -3]} className="pointer-events-auto">
       <div
         className="w-[420px] space-y-2 rounded-2xl border border-white/10 bg-black/60 p-4 text-sand shadow-2xl backdrop-blur"
-        style={{ opacity: 0.5 + hush * 0.5 }}
+        style={{
+          opacity: 0.92 - hush * 0.32,
+          filter: `saturate(${1 - hush * 0.1}) contrast(${1 - hush * 0.12})`
+        }}
       >
         <div className="flex items-center justify-between text-xs text-slate-300">
           <p>Command / Search</p>
@@ -1167,6 +1206,7 @@ const SpaceWorld = () => {
   return (
     <group onPointerMissed={() => selectNode(undefined)}>
       <Env hush={hush} />
+      <HushFog hush={hush} />
       <OrbitControls ref={controls} enablePan={false} enableDamping dampingFactor={0.08} />
       <ambientLight intensity={0.8} />
       <pointLight position={[10, 12, 8]} intensity={1.2} />
@@ -1186,6 +1226,7 @@ const SpaceWorld = () => {
         visibleSet={visibleSet}
         hush={hush}
         tagFilteredSet={tagFilteredSet}
+        selectedNodeId={selectedNodeId}
       />
       <Toolbelt
         hush={hush}
@@ -1210,7 +1251,7 @@ const SpaceWorld = () => {
       />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -3, 0]}>
         <circleGeometry args={[18, 64]} />
-        <meshBasicMaterial color="#0f1324" transparent opacity={0.5 + hush * 0.2} />
+        <meshBasicMaterial color="#0f1324" transparent opacity={0.62 - hush * 0.32} />
       </mesh>
       {nodes.slice(0, 12).map((node) => {
         const dimmed = !tagFilteredSet.has(node.id);
@@ -1238,7 +1279,7 @@ const WorldRouter = () => {
 };
 
 export default function App() {
-  const { init, initialized } = useMiCa();
+  const { init, initialized, hush } = useMiCa();
 
   useEffect(() => {
     init();
@@ -1261,6 +1302,15 @@ export default function App() {
         <color attach="background" args={[0.02, 0.04, 0.09]} />
         <WorldRouter />
       </Canvas>
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            'radial-gradient(ellipse at center, rgba(5,8,20,0) 55%, rgba(5,8,20,0.45) 100%)',
+          opacity: 0.18 + hush * 0.42,
+          transition: 'opacity 200ms ease'
+        }}
+      />
       <div className="pointer-events-none absolute left-4 top-4 text-xs uppercase tracking-[0.3em] text-aurora">
         MiCa Immersive Home
       </div>
